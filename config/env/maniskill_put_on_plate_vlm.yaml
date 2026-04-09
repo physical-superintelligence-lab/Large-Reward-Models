@@ -1,0 +1,88 @@
+# ManiSkill PutOnPlateInScene25Main with unified VLM Reward.
+# Supports 5 modes: contrastive, completion, progress, roboreward, robometer.
+# Mode is selected by setting the appropriate flags in the training YAML.
+env_type: vlm_maniskill
+
+total_num_envs: null
+
+auto_reset: True
+ignore_terminations: False
+use_rel_reward: True
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: True
+max_steps_per_rollout_epoch: 80
+max_episode_steps: 80
+
+# === VLM HTTP Reward Configuration ===
+use_vlm_reward: true
+vlm_server_url: "http://localhost:5002"
+
+# --- Mode selection (set exactly one to true) ---
+vlm_use_comparison: false       # contrastive mode
+vlm_use_roboreward: false       # roboreward mode (1-5 video scoring)
+vlm_use_robometer: false        # robometer mode (per-frame progress heads)
+# If all three are false, uses vlm_reward_type below:
+vlm_reward_type: progress       # completion | progress | quality
+
+# --- Common parameters ---
+vlm_reward_scale: 1.0
+vlm_reward_weight: 1.0
+vlm_call_interval: 10
+vlm_pure_reward: true
+vlm_non_call_reward_mode: hold
+vlm_require_connection: true
+vlm_task_description: "Put the object on the plate"
+
+# --- Completion mode parameters ---
+vlm_completion_binary_reward: false
+vlm_success_threshold: 0.5
+
+# --- Progress mode parameters ---
+vlm_include_initial_image: false
+
+# --- RoboReward video mode parameters ---
+vlm_roboreward_max_frames: 16
+
+# --- Robometer video mode parameters ---
+vlm_robometer_max_frames: 16
+vlm_sample_envs: 0
+vlm_calls_per_episode: 0
+vlm_use_rel_reward: false
+vlm_episode_end_backfill: false
+vlm_backfill_reward_offset: 0.0
+
+# --- Logging ---
+vlm_task_prompt_template: null
+vlm_log_enabled: true
+vlm_log_file: /data/RLinf/vlm_output.log
+vlm_save_images: false
+vlm_save_success_only: true
+vlm_success_source: env
+vlm_success_metric: success
+vlm_rgb_source: obs
+vlm_image_dir: /data/RLinf/vlm_images
+vlm_image_interval: 1
+vlm_image_max: 2000
+# =====================================
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: PutOnPlateInScene25Main-v3
+  num_envs: null
+  obs_mode: "rgb+segmentation"
+  control_mode: "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+  sim_backend: "gpu"
+  sim_config:
+    sim_freq: 500
+    control_freq: 5
+  max_episode_steps: ${env.train.max_episode_steps}
+  sensor_configs:
+    shader_pack: "default"
+  render_mode: all
+  obj_set: train
+  use_multiple_plates: False
