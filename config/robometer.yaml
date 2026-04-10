@@ -105,7 +105,7 @@ env:
     vlm_non_call_reward_mode: hold
     vlm_require_connection: true
     vlm_include_initial_image: true
-    vlm_server_url: "http://localhost:5003"
+    vlm_server_url: "http://localhost:5002"
     init_params:
       use_multiple_plates: False
   eval:
@@ -126,7 +126,7 @@ env:
     vlm_pure_reward: true
     vlm_non_call_reward_mode: hold
     vlm_require_connection: true
-    vlm_server_url: "http://localhost:5003"
+    vlm_server_url: "http://localhost:5002"
     group_size: ${algorithm.group_size}
     is_eval: True
     video_cfg:
