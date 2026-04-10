@@ -49,9 +49,6 @@ vlm_robometer_max_frames: 16
 vlm_sample_envs: 0
 vlm_calls_per_episode: 0
 vlm_use_rel_reward: false
-vlm_episode_end_backfill: false
-vlm_backfill_reward_offset: 0.0
-
 # --- Logging ---
 vlm_task_prompt_template: null
 vlm_log_enabled: true

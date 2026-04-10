@@ -98,8 +98,6 @@ env:
     vlm_sample_envs: 4
     vlm_calls_per_episode: 0
     vlm_use_rel_reward: false
-    vlm_episode_end_backfill: true
-    vlm_backfill_reward_offset: -1.0
     vlm_reward_scale: 1.0
     vlm_reward_weight: 1.0
     vlm_call_interval: 10
@@ -122,8 +120,6 @@ env:
     vlm_sample_envs: 4
     vlm_calls_per_episode: 0
     vlm_use_rel_reward: false
-    vlm_episode_end_backfill: true
-    vlm_backfill_reward_offset: -1.0
     vlm_reward_scale: 1.0
     vlm_reward_weight: 1.0
     vlm_call_interval: 10

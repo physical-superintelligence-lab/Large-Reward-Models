@@ -101,14 +101,6 @@ class VLMManiskillEnv(ManiskillEnv):
         self.vlm_sample_envs = int(cfg.get("vlm_sample_envs", 0))
         self.vlm_calls_per_episode = int(cfg.get("vlm_calls_per_episode", 0))
         self.vlm_use_rel_reward = bool(cfg.get("vlm_use_rel_reward", False))
-        # Episode-end backfill mode: collect a full episode, then fill dense rewards.
-        self.vlm_episode_end_backfill = bool(
-            cfg.get("vlm_episode_end_backfill", False)
-        )
-        # Paper-style single-stage shaping uses reward_t = progress_t - 1.0.
-        self.vlm_backfill_reward_offset = float(
-            cfg.get("vlm_backfill_reward_offset", 0.0)
-        )
         self._max_episode_steps = int(
             cfg.get("max_episode_steps", cfg.get("max_steps_per_rollout_epoch", 80))
         )
@@ -153,11 +145,6 @@ class VLMManiskillEnv(ManiskillEnv):
         self._vlm_prev_images: dict[int, np.ndarray] = {}  # for contrastive mode
         self._vlm_frame_buffers = {}  # for robometer video mode
         self._vlm_roboreward_frame_buffers: dict[int, list] = {}  # for roboreward video mode
-        self._vlm_episode_frames = {}
-        self._vlm_episode_done = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
-        )
-        self._vlm_backfill_pending = {}
         self._vlm_active_steps = set()
         self._vlm_last_rewards = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device
@@ -461,101 +448,6 @@ class VLMManiskillEnv(ManiskillEnv):
                     0, len(buf) - 1, self.vlm_robometer_max_frames, dtype=int
                 )
                 self._vlm_frame_buffers[env_idx] = [buf[i] for i in keep]
-
-    def _update_episode_frame_buffers(self, rgb_list: list) -> None:
-        """Append one frame per env for episode-end backfill reward computation."""
-        total = min(self.num_envs, len(rgb_list))
-        for env_idx in range(total):
-            if bool(self._vlm_episode_done[env_idx].item()):
-                continue
-            rgb = rgb_list[env_idx]
-            if rgb is None or rgb.size == 0:
-                continue
-            if env_idx not in self._vlm_episode_frames:
-                self._vlm_episode_frames[env_idx] = []
-            self._vlm_episode_frames[env_idx].append(np.array(rgb, copy=True))
-            # Keep episode memory bounded.
-            if len(self._vlm_episode_frames[env_idx]) > self._max_episode_steps:
-                self._vlm_episode_frames[env_idx] = self._vlm_episode_frames[env_idx][
-                    -self._max_episode_steps :
-                ]
-
-    def _extract_progress_series(self, result: dict, target_len: int) -> np.ndarray:
-        """Extract/interpolate progress_per_frame to target_len."""
-        target_len = max(1, int(target_len))
-        progress = result.get("progress_per_frame", None)
-
-        # Fallback for older servers: parse from response JSON string.
-        if not progress:
-            response = result.get("response", "")
-            if isinstance(response, str) and "progress_per_frame" in response:
-                try:
-                    import json
-
-                    parsed = json.loads(response)
-                    progress = parsed.get("progress_per_frame", None)
-                except Exception:
-                    progress = None
-
-        if not progress:
-            score = float(result.get("score", 0.0))
-            return np.full((target_len,), score, dtype=np.float32)
-
-        vals = []
-        for v in progress:
-            try:
-                vals.append(float(v))
-            except Exception:
-                continue
-        if not vals:
-            score = float(result.get("score", 0.0))
-            return np.full((target_len,), score, dtype=np.float32)
-
-        vals = np.clip(np.asarray(vals, dtype=np.float32), 0.0, 1.0)
-        if len(vals) == target_len:
-            return vals
-        if len(vals) == 1:
-            return np.full((target_len,), float(vals[0]), dtype=np.float32)
-
-        src_x = np.linspace(0.0, 1.0, num=len(vals), dtype=np.float32)
-        tgt_x = np.linspace(0.0, 1.0, num=target_len, dtype=np.float32)
-        interp = np.interp(tgt_x, src_x, vals).astype(np.float32)
-        return np.clip(interp, 0.0, 1.0)
-
-    def _compute_episode_backfill(self, done_mask: torch.Tensor, task_descs: list) -> None:
-        """Compute per-step rewards at episode end and stage them for rollout backfill."""
-        if self._vlm_client is None:
-            return
-        done_indices = done_mask.nonzero(as_tuple=True)[0].detach().cpu().tolist()
-        for env_idx in done_indices:
-            if bool(self._vlm_episode_done[env_idx].item()):
-                continue
-            frames = self._vlm_episode_frames.get(env_idx, [])
-            if not frames:
-                self._vlm_episode_done[env_idx] = True
-                continue
-            task_desc = task_descs[env_idx] if env_idx < len(task_descs) else task_descs[0]
-            task_prompt = self._format_vlm_prompt(task_desc)
-            try:
-                result = self._vlm_client.compute_robometer(frames, task_prompt)
-                progress = self._extract_progress_series(result, len(frames))
-                dense_rewards = progress + self.vlm_backfill_reward_offset
-                dense_rewards = np.asarray(dense_rewards, dtype=np.float32)
-                self._vlm_backfill_pending[int(env_idx)] = dense_rewards
-                if self._vlm_log_enabled:
-                    timestamp = datetime.now().strftime("%H:%M:%S")
-                    log_line = (
-                        f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},"
-                        f"robometer_backfill,{task_desc},len={len(dense_rewards)},"
-                        f"offset={self.vlm_backfill_reward_offset:.3f},"
-                        f"final={float(progress[-1]):.3f}\n"
-                    )
-                    with open(self.vlm_log_file, "a") as f:
-                        f.write(log_line)
-            except Exception as e:
-                print(f"[VLM] Warning: episode-end backfill failed for env {env_idx}: {e}")
-            finally:
-                self._vlm_episode_done[env_idx] = True
 
     def _compute_vlm_robometer_rewards(
         self,
@@ -880,9 +772,6 @@ class VLMManiskillEnv(ManiskillEnv):
             self._vlm_prev_images = {}
             self._vlm_frame_buffers = {}
             self._vlm_roboreward_frame_buffers = {}
-            self._vlm_episode_frames = {}
-            self._vlm_episode_done[:] = False
-            self._vlm_backfill_pending = {}
             self._vlm_active_steps = set()
             if self.vlm_calls_per_episode > 0 and self.vlm_call_interval > 0:
                 all_triggers = list(
@@ -911,50 +800,7 @@ class VLMManiskillEnv(ManiskillEnv):
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
-                self._vlm_episode_frames.pop(idx, None)
-                self._vlm_backfill_pending.pop(idx, None)
-                self._vlm_episode_done[idx] = False
         return extracted_obs, infos
-
-    def chunk_step(self, chunk_actions):
-        """Attach episode-end VLM backfill payload to infos for rollout-time reward rewrite."""
-        extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
-            super().chunk_step(chunk_actions)
-        )
-
-        if self.vlm_episode_end_backfill and self._vlm_backfill_pending:
-            max_len = int(self._max_episode_steps)
-            backfill_mask = torch.zeros(
-                self.num_envs, dtype=torch.bool, device=self.device
-            )
-            backfill_lengths = torch.zeros(
-                self.num_envs, dtype=torch.int32, device=self.device
-            )
-            backfill_rewards = torch.zeros(
-                self.num_envs, max_len, dtype=torch.float32, device=self.device
-            )
-
-            for env_idx, rewards in self._vlm_backfill_pending.items():
-                if rewards is None:
-                    continue
-                arr = np.asarray(rewards, dtype=np.float32).reshape(-1)
-                length = min(max_len, int(arr.shape[0]))
-                if length <= 0:
-                    continue
-                backfill_mask[env_idx] = True
-                backfill_lengths[env_idx] = length
-                backfill_rewards[env_idx, :length] = torch.from_numpy(
-                    arr[:length]
-                ).to(self.device)
-
-            if backfill_mask.any():
-                infos["vlm_backfill_mask"] = backfill_mask
-                infos["vlm_backfill_lengths"] = backfill_lengths
-                infos["vlm_backfill_rewards"] = backfill_rewards
-
-            self._vlm_backfill_pending = {}
-
-        return extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos
 
     def _calc_step_reward(self, reward, info):
         """
@@ -1006,33 +852,6 @@ class VLMManiskillEnv(ManiskillEnv):
 
         if not self.use_vlm_reward or not self._vlm_connected:
             return extracted_obs, step_reward, terminations, truncations, infos
-
-        # Paper-style episode-end backfill:
-        # - collect trajectory frames online without waiting reward model
-        # - compute dense rewards when an episode ends
-        # - rollout worker rewrites buffered rewards before PPO update
-        if self.vlm_episode_end_backfill and self.vlm_use_robometer:
-            rgb_list = self._extract_rgb_for_vlm(extracted_obs)
-            self._update_episode_frame_buffers(rgb_list)
-            done_mask = torch.logical_or(terminations, truncations).bool()
-            if done_mask.any():
-                task_descs = self._get_task_descriptions()
-                self._compute_episode_backfill(done_mask, task_descs)
-
-            # Placeholder reward is zero; rollout worker will rewrite finished
-            # trajectories with episode-end dense rewards before PPO update.
-            placeholder_reward = torch.zeros_like(step_reward)
-            infos["vlm_rewards"] = placeholder_reward.clone()
-            self._log_openloop_step(
-                infos=infos,
-                step_reward=step_reward,
-                vlm_rewards=placeholder_reward,
-                terminations=terminations,
-                truncations=truncations,
-            )
-            if self._vlm_success_source == "env":
-                self._save_env_success_images(extracted_obs, infos)
-            return extracted_obs, placeholder_reward, terminations, truncations, infos
 
         is_trigger_step = (
             self.vlm_call_interval <= 1
@@ -1095,9 +914,6 @@ class VLMManiskillEnv(ManiskillEnv):
             self._vlm_prev_images = {}
             self._vlm_frame_buffers = {}
             self._vlm_roboreward_frame_buffers = {}
-            self._vlm_episode_frames = {}
-            self._vlm_episode_done[:] = False
-            self._vlm_backfill_pending = {}
             self._vlm_active_steps = set()
             return
         if isinstance(env_idx, torch.Tensor):
@@ -1108,9 +924,6 @@ class VLMManiskillEnv(ManiskillEnv):
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
-                self._vlm_episode_frames.pop(idx, None)
-                self._vlm_backfill_pending.pop(idx, None)
-                self._vlm_episode_done[idx] = False
         else:
             env_idx = np.asarray(env_idx).tolist()
             self._vlm_last_rewards[env_idx] = 0.0
@@ -1119,6 +932,3 @@ class VLMManiskillEnv(ManiskillEnv):
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
-                self._vlm_episode_frames.pop(idx, None)
-                self._vlm_backfill_pending.pop(idx, None)
-                self._vlm_episode_done[idx] = False
