@@ -146,18 +146,17 @@ tensorboard --logdir ./results --port 6006
 
 ### Switching Reward Modes
 
-Each mode has a dedicated config file under `config/`. The key parameters that differ:
+Each mode has a dedicated config file under `config/`. To switch modes, simply use a different config file — no manual parameter tuning needed:
 
-| Parameter | contrastive | completion | progress | roboreward | robometer |
-|---|---|---|---|---|---|
-| `vlm_use_comparison` | true | - | - | - | - |
-| `vlm_use_roboreward` | - | - | - | true | - |
-| `vlm_use_robometer` | - | - | - | - | true |
-| `vlm_reward_type` | - | completion | progress | - | progress |
-| `vlm_call_interval` | 10 | 5 | 10 | 10 | 10 |
-| `vlm_include_initial_image` | - | - | true | - | true |
-| `vlm_roboreward_max_frames` | - | - | - | 16 | - |
-| `vlm_robometer_max_frames` | - | - | - | - | 16 |
+```bash
+bash run_embodiment.sh contrastive    # uses config/contrastive.yaml
+bash run_embodiment.sh completion     # uses config/completion.yaml
+bash run_embodiment.sh progress       # uses config/progress.yaml
+bash run_embodiment.sh roboreward     # uses config/roboreward.yaml
+bash run_embodiment.sh robometer      # uses config/robometer.yaml
+```
+
+Remember to start the corresponding VLM reward server with the matching model before training (see [Step 1](#step-1-start-vlm-reward-server-on-host-outside-docker)).
 
 ### Common Parameters
 
