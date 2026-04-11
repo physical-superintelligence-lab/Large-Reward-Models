@@ -9,10 +9,10 @@ Built on [RLinf](https://github.com/RLinf/RLinf) framework with [ManiSkill](http
 | Mode | VLM Model | Signal Type | Description |
 |---|---|---|---|
 | **Contrastive** | LRM-contrastive (Qwen3-VL-8B) | +1 / -1 / 0 | Compares two consecutive frames to determine progress direction |
-| **Completion** | LRM-completion (Qwen3-VL-8B) | Binary 0 / 1 | Single-frame yes/no task completion judgment |
-| **Progress** | LRM-progress (Qwen3-VL-8B) | Continuous 0~1 | Single-frame task completion progress estimation |
-| **RoboReward** | LRM-roboreward (Qwen3-VL-8B) | Discrete 1-5 → 0~1 | Scores a video trajectory on a 1-5 rubric |
-| **Robometer** | Robometer-4B (Qwen3-VL-4B + reward heads) | Continuous 0~1 per frame | Per-frame progress via custom reward heads |
+| **Completion** | LRM-completion | Binary 0 / 1 | Single-frame yes/no task completion judgment |
+| **Progress** | LRM-progress | Continuous 0~1 | Single-frame task completion progress estimation |
+| **RoboReward** | RoboReward-8B | Discrete 1-5 → 0~1 | Scores a video trajectory on a 1-5 rubric |
+| **Robometer** | Robometer-4B | Continuous 0~1 per frame | Per-frame progress via custom reward heads |
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ git clone https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
 | Completion | LRM-completion | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/completion) |
 | Progress | LRM-progress | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/progress) |
 | RoboReward | RoboReward-8B | [HuggingFace](https://huggingface.co/teetone/RoboReward-8B) |
-| Robometer | Robometer-4B + Qwen3-VL-4B-Instruct | [HuggingFace](https://huggingface.co/aliangdw/Robometer-4B) |
+| Robometer | Robometer-4B | [HuggingFace](https://huggingface.co/aliangdw/Robometer-4B) |
 
 ## Setup
 
@@ -223,5 +223,10 @@ Large-Reward-Models/
 ## Citation
 
 ```bibtex
-TODO
+@article{wu2026large,
+  title={Large Reward Models: Generalizable Online Robot Reward Generation with Vision-Language Models},
+  author={Wu, Yanru and Yuan, Weiduo and Qi, Ang and Guizilini, Vitor and Mao, Jiageng and Wang, Yue},
+  journal={arXiv preprint arXiv:2603.16065},
+  year={2026}
+}
 ```
