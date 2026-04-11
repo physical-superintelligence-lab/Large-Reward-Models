@@ -16,7 +16,8 @@ Built on [RLinf](https://github.com/RLinf/RLinf) framework with [ManiSkill](http
 
 ## Prerequisites
 
-- [RLinf](https://github.com/RLinf/RLinf) framework
+- [RLinf](https://github.com/RLinf/RLinf) framework (for RL training, inside Docker)
+- A separate Python environment for the VLM reward server (on host, outside Docker)
 - VLM reward model (see [Models](#models) below)
 
 ## Models
@@ -37,8 +38,8 @@ git clone https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
 | Contrastive | LRM-contrastive | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/contrastive) |
 | Completion | LRM-completion | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/completion) |
 | Progress | LRM-progress | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/progress) |
-| RoboReward | LRM-roboreward | [HuggingFace](https://huggingface.co/USC-PSI-Lab/LRM-models/tree/main/roboreward) |
-| Robometer | Robometer-4B + Qwen3-VL-4B-Instruct | [HuggingFace](https://huggingface.co/robometer/Robometer-4B) |
+| RoboReward | RoboReward-8B | [HuggingFace](https://huggingface.co/teetone/RoboReward-8B) |
+| Robometer | Robometer-4B + Qwen3-VL-4B-Instruct | [HuggingFace](https://huggingface.co/aliangdw/Robometer-4B) |
 
 ## Setup
 
@@ -67,7 +68,16 @@ cd /workspace/RLinf/rlinf/envs/maniskill
 huggingface-cli download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 ```
 
-### 2. Copy files into RLinf
+### 2. Set up VLM Reward Server Environment (on host, outside Docker)
+
+```bash
+conda create -n vlm_reward python=3.10
+conda activate vlm_reward
+cd Large-Reward-Models
+pip install -r vlm_reward/requirements.txt
+```
+
+### 3. Copy files into RLinf
 
 ```bash
 # Outside Docker
@@ -86,7 +96,7 @@ cp Large-Reward-Models/config/model/*.yaml RLinf/examples/embodiment/config/mode
 cp Large-Reward-Models/config/training_backend/*.yaml RLinf/examples/embodiment/config/training_backend/
 ```
 
-### 3. Update model paths
+### 4. Update model paths
 
 Edit the training YAML for your chosen mode (e.g., `config/contrastive.yaml`) and set the policy model path:
 
