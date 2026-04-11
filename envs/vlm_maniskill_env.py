@@ -48,9 +48,9 @@ from PIL import Image
 
 from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
-# Add VLM integration path
-VLM_INTEGRATION_PATH = "/data/vlm_reward/rlinf_integration"
-if os.path.exists(VLM_INTEGRATION_PATH) and VLM_INTEGRATION_PATH not in sys.path:
+# Add VLM integration path (client lives in same directory as this file)
+VLM_INTEGRATION_PATH = os.path.dirname(os.path.abspath(__file__))
+if VLM_INTEGRATION_PATH not in sys.path:
     sys.path.insert(0, VLM_INTEGRATION_PATH)
 
 try:
