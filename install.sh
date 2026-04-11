@@ -33,42 +33,70 @@ cp "$SCRIPT_DIR/config/training_backend/"*.yaml "$RLINF_DIR/examples/embodiment/
 # 4. Patch RLinf to register vlm_maniskill env type
 echo "[4/4] Patching RLinf for vlm_maniskill support ..."
 
-# 4a. Patch rlinf/envs/__init__.py - add VLM_MANISKILL to enum
-INIT_FILE="$RLINF_DIR/rlinf/envs/__init__.py"
-if ! grep -q "VLM_MANISKILL" "$INIT_FILE"; then
-    # Add enum entry after MANISKILL line
-    sed -i '/MANISKILL = "maniskill"/a\    VLM_MANISKILL = "vlm_maniskill"' "$INIT_FILE"
+python3 - "$RLINF_DIR" <<'PYEOF'
+import sys, os, re
 
-    # Add env class registration before the final else clause
-    sed -i '/raise NotImplementedError.*Environment type/i\
-    elif env_type == SupportedEnvType.VLM_MANISKILL:\
-        from rlinf.envs.maniskill.vlm_maniskill_env import VLMManiskillEnv\
-        return VLMManiskillEnv' "$INIT_FILE"
+rlinf_dir = sys.argv[1]
 
-    echo "  Patched $INIT_FILE"
-else
-    echo "  $INIT_FILE already patched, skipping."
-fi
+# 4a. Patch rlinf/envs/__init__.py
+init_file = os.path.join(rlinf_dir, "rlinf", "envs", "__init__.py")
+with open(init_file, "r") as f:
+    content = f.read()
 
-# 4b. Patch rlinf/envs/action_utils.py - add VLM_MANISKILL to action handling
-ACTION_FILE="$RLINF_DIR/rlinf/envs/action_utils.py"
-if ! grep -q "VLM_MANISKILL" "$ACTION_FILE"; then
-    # Replace "== SupportedEnvType.MANISKILL" with "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
-    sed -i 's/== SupportedEnvType\.MANISKILL/in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)/g' "$ACTION_FILE"
-    echo "  Patched $ACTION_FILE"
-else
-    echo "  $ACTION_FILE already patched, skipping."
-fi
+if "VLM_MANISKILL" not in content:
+    # Add enum entry after MANISKILL = "maniskill"
+    content = content.replace(
+        'MANISKILL = "maniskill"',
+        'MANISKILL = "maniskill"\n    VLM_MANISKILL = "vlm_maniskill"'
+    )
+    # Add env class registration before "else:\n        raise NotImplementedError"
+    content = content.replace(
+        '    else:\n        raise NotImplementedError',
+        '    elif env_type == SupportedEnvType.VLM_MANISKILL:\n'
+        '        from rlinf.envs.maniskill.vlm_maniskill_env import VLMManiskillEnv\n'
+        '\n'
+        '        return VLMManiskillEnv\n'
+        '    else:\n        raise NotImplementedError'
+    )
+    with open(init_file, "w") as f:
+        f.write(content)
+    print(f"  Patched {init_file}")
+else:
+    print(f"  {init_file} already patched, skipping.")
 
-# 4c. Patch rlinf/config.py - add VLM_MANISKILL to validation
-CONFIG_FILE="$RLINF_DIR/rlinf/config.py"
-if ! grep -q "VLM_MANISKILL" "$CONFIG_FILE"; then
-    # Replace "== SupportedEnvType.MANISKILL" with "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
-    sed -i 's/== SupportedEnvType\.MANISKILL/in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)/g' "$CONFIG_FILE"
-    echo "  Patched $CONFIG_FILE"
-else
-    echo "  $CONFIG_FILE already patched, skipping."
-fi
+# 4b. Patch rlinf/envs/action_utils.py
+action_file = os.path.join(rlinf_dir, "rlinf", "envs", "action_utils.py")
+with open(action_file, "r") as f:
+    content = f.read()
+
+if "VLM_MANISKILL" not in content:
+    content = content.replace(
+        "== SupportedEnvType.MANISKILL",
+        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
+    )
+    with open(action_file, "w") as f:
+        f.write(content)
+    print(f"  Patched {action_file}")
+else:
+    print(f"  {action_file} already patched, skipping.")
+
+# 4c. Patch rlinf/config.py
+config_file = os.path.join(rlinf_dir, "rlinf", "config.py")
+with open(config_file, "r") as f:
+    content = f.read()
+
+if "VLM_MANISKILL" not in content:
+    content = content.replace(
+        "== SupportedEnvType.MANISKILL",
+        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
+    )
+    with open(config_file, "w") as f:
+        f.write(content)
+    print(f"  Patched {config_file}")
+else:
+    print(f"  {config_file} already patched, skipping.")
+
+PYEOF
 
 echo ""
 echo "=== Installation complete ==="
