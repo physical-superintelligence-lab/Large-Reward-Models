@@ -77,23 +77,14 @@ cd Large-Reward-Models
 pip install -r vlm_reward/requirements.txt
 ```
 
-### 3. Copy files into RLinf
+### 3. Install into RLinf
+
+The install script copies files into RLinf and patches it to register the `vlm_maniskill` environment type:
 
 ```bash
-# Outside Docker
 git clone https://github.com/physical-superintelligence-lab/Large-Reward-Models.git
-
-# Copy unified env into RLinf
-cp Large-Reward-Models/envs/vlm_maniskill_env.py RLinf/rlinf/envs/maniskill/vlm_maniskill_env.py
-
-# Copy VLM reward client into RLinf (accessible from Docker)
-cp Large-Reward-Models/vlm_reward/vlm_reward_client.py RLinf/rlinf/envs/maniskill/vlm_reward_client.py
-
-# Copy training configs
-cp Large-Reward-Models/config/*.yaml RLinf/examples/embodiment/config/
-cp Large-Reward-Models/config/env/*.yaml RLinf/examples/embodiment/config/env/
-cp Large-Reward-Models/config/model/*.yaml RLinf/examples/embodiment/config/model/
-cp Large-Reward-Models/config/training_backend/*.yaml RLinf/examples/embodiment/config/training_backend/
+cd Large-Reward-Models
+bash install.sh /path/to/RLinf
 ```
 
 ### 4. Update model paths
@@ -200,6 +191,7 @@ The VLM reward server runs on the host with its own GPU for VLM inference. The R
 ```
 Large-Reward-Models/
 ├── README.md
+├── install.sh                    # Auto-install into RLinf
 ├── config/
 │   ├── contrastive.yaml          # Training config: contrastive mode
 │   ├── completion.yaml           # Training config: completion mode
@@ -215,6 +207,7 @@ Large-Reward-Models/
 ├── envs/
 │   └── vlm_maniskill_env.py      # Unified VLM ManiSkill environment (all 5 modes)
 └── vlm_reward/
+    ├── requirements.txt          # Python dependencies for VLM server
     ├── start_server.sh           # VLM reward server launcher
     ├── vlm_reward_server.py      # VLM reward server (all 5 endpoints)
     └── vlm_reward_client.py      # VLM reward client (called from env)
