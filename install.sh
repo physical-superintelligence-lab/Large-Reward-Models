@@ -33,7 +33,8 @@ cp "$SCRIPT_DIR/config/training_backend/"*.yaml "$RLINF_DIR/examples/embodiment/
 
 # 4. Copy eval scripts
 echo "[4/5] Copying eval scripts ..."
-cp "$SCRIPT_DIR/eval/"*.py "$RLINF_DIR/scripts/"
+mkdir -p "$RLINF_DIR/examples/embodiment/eval"
+cp "$SCRIPT_DIR/eval/"*.py "$RLINF_DIR/examples/embodiment/eval/"
 
 # 5. Patch RLinf to register vlm_maniskill env type
 echo "[5/5] Patching RLinf for vlm_maniskill support ..."
