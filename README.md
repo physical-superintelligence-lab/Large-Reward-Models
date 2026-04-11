@@ -186,6 +186,54 @@ Host Machine                          Docker Container (RLinf)
 
 The VLM reward server runs on the host with its own GPU for VLM inference. The RL training runs inside the RLinf Docker container. They communicate via HTTP on port 5002 (Docker uses `--network host`).
 
+## Evaluation
+
+### Closed-Loop Evaluation (Success Rate)
+
+Run the trained policy in ManiSkill and measure success rate:
+
+```bash
+# Inside RLinf Docker container
+source switch_env openpi
+
+# Edit config/eval/closed_loop_eval.yaml to set ckpt_path and model_path
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash run_embodiment.sh closed_loop_eval
+```
+
+### Open-Loop Evaluation (Reward Quality Metrics)
+
+Evaluate VLM reward quality by scoring recorded trajectories and computing discriminative accuracy, correlation, and temporal consistency metrics.
+
+**Step 1: Collect trajectories**
+
+```bash
+# Inside Docker - runs policy and saves frames + oracle rewards
+bash run_embodiment.sh open_loop_collect
+```
+
+**Step 2: Score with VLM** (on host, with VLM server running)
+
+```bash
+cd RLinf/scripts
+
+# Contrastive mode
+python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode comparison
+
+# Completion mode
+python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode completion
+
+# Progress mode
+python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode progress
+```
+
+**Step 3: Compute metrics**
+
+```bash
+python compute_openloop_metrics.py --scores_path <trajectory_dir>/worker_0/vlm_scores.json
+```
+
+Outputs `openloop_metrics.json` with discriminative accuracy (ROC-AUC, pairwise ranking), correlation (Pearson, Spearman, Kendall), and temporal consistency metrics.
+
 ## File Structure
 
 ```
@@ -199,13 +247,20 @@ Large-Reward-Models/
 │   ├── roboreward.yaml           # Training config: roboreward mode
 │   ├── robometer.yaml            # Training config: robometer mode
 │   ├── env/
-│   │   └── maniskill_put_on_plate_vlm.yaml  # Environment config (shared)
+│   │   ├── maniskill_put_on_plate_vlm.yaml        # VLM environment config
+│   │   └── maniskill_put_on_plate_recording.yaml   # Recording env config (open-loop eval)
+│   ├── eval/
+│   │   ├── closed_loop_eval.yaml   # Closed-loop eval config
+│   │   └── open_loop_collect.yaml  # Open-loop trajectory collection config
 │   ├── model/
 │   │   └── pi0_5.yaml            # Policy model config
 │   └── training_backend/
 │       └── fsdp.yaml             # FSDP training backend config
 ├── envs/
 │   └── vlm_maniskill_env.py      # Unified VLM ManiSkill environment (all 5 modes)
+├── eval/
+│   ├── score_with_vlm.py         # Score trajectories with VLM (contrastive/completion/progress)
+│   └── compute_openloop_metrics.py  # Compute open-loop metrics
 └── vlm_reward/
     ├── requirements.txt          # Python dependencies for VLM server
     ├── start_server.sh           # VLM reward server launcher
