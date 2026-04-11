@@ -24,14 +24,19 @@ echo "[2/4] Copying vlm_reward_client.py ..."
 cp "$SCRIPT_DIR/vlm_reward/vlm_reward_client.py" "$RLINF_DIR/rlinf/envs/maniskill/vlm_reward_client.py"
 
 # 3. Copy configs
-echo "[3/4] Copying config files ..."
+echo "[3/5] Copying config files ..."
 cp "$SCRIPT_DIR/config/"*.yaml "$RLINF_DIR/examples/embodiment/config/"
 cp "$SCRIPT_DIR/config/env/"*.yaml "$RLINF_DIR/examples/embodiment/config/env/"
+cp "$SCRIPT_DIR/config/eval/"*.yaml "$RLINF_DIR/examples/embodiment/config/"
 cp "$SCRIPT_DIR/config/model/"*.yaml "$RLINF_DIR/examples/embodiment/config/model/"
 cp "$SCRIPT_DIR/config/training_backend/"*.yaml "$RLINF_DIR/examples/embodiment/config/training_backend/"
 
-# 4. Patch RLinf to register vlm_maniskill env type
-echo "[4/4] Patching RLinf for vlm_maniskill support ..."
+# 4. Copy eval scripts
+echo "[4/5] Copying eval scripts ..."
+cp "$SCRIPT_DIR/eval/"*.py "$RLINF_DIR/scripts/"
+
+# 5. Patch RLinf to register vlm_maniskill env type
+echo "[5/5] Patching RLinf for vlm_maniskill support ..."
 
 python3 - "$RLINF_DIR" <<'PYEOF'
 import sys, os, re
