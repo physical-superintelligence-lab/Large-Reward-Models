@@ -27,7 +27,7 @@ runner:
 
   max_epochs: 1
   max_steps: -1
-  only_eval: False
+  only_eval: True
   val_check_interval: 1
   save_interval: 999
 
@@ -119,10 +119,10 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
+  micro_batch_size: 4
   global_batch_size: 5120
   seed: 0
-  enable_offload: False
+  enable_offload: True
 
   model:
     model_path: "/path/to/RLinf-Pi05-ManiSkill-25Main-SFT"
@@ -151,8 +151,9 @@ actor:
 
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     gradient_checkpointing: False
+    cpu_offload: True
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
