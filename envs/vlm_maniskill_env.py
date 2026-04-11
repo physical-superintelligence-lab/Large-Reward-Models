@@ -238,7 +238,7 @@ class VLMManiskillEnv(ManiskillEnv):
             return list(range(total))
         return list(np.random.choice(total, size=self.vlm_sample_envs, replace=False))
 
-    def _wrap_obs(self, raw_obs):
+    def _wrap_obs(self, raw_obs, infos=None):
         """Override to add task_descriptions and wrist_images for Pi0 compatibility.
 
         Pi0's obs_processor expects 'task_descriptions' and 'wrist_images' keys,
