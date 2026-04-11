@@ -184,10 +184,18 @@ Run the trained policy in ManiSkill and measure success rate:
 ```bash
 # Inside RLinf Docker container
 source switch_env openpi
+cd /workspace/RLinf/examples/embodiment
 
-# Edit config/eval/closed_loop_eval.yaml to set ckpt_path and model_path
-bash run_embodiment.sh closed_loop_eval
+# Edit config/eval/closed_loop_eval.yaml to set ckpt_path and model_path, then:
+EMBODIED_PATH=/workspace/RLinf/examples/embodiment ROBOT_PLATFORM=MANISKILL \
+MUJOCO_GL=egl PYOPENGL_PLATFORM=egl PYTHONPATH=/workspace/RLinf:$PYTHONPATH \
+python eval_embodied_agent.py \
+  --config-path /workspace/RLinf/examples/embodiment/config/ \
+  --config-name closed_loop_eval \
+  runner.logger.log_path=../results
 ```
+
+> **Note:** Use `eval_embodied_agent.py` (not `run_embodiment.sh`) for closed-loop eval. The training script spawns an Actor worker for IPC weight sync which causes GPU OOM on 40 GB cards. The eval script loads the checkpoint directly into the rollout worker without an Actor.
 
 ### Open-Loop Evaluation (Reward Quality Metrics)
 
@@ -203,7 +211,7 @@ bash run_embodiment.sh open_loop_collect
 **Step 2: Score with VLM** (on host, with VLM server running)
 
 ```bash
-cd RLinf/scripts
+cd RLinf/examples/embodiment/eval
 
 # Contrastive mode
 python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode comparison
