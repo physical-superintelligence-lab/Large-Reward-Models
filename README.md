@@ -159,17 +159,6 @@ bash run_embodiment.sh robometer      # uses config/robometer.yaml
 
 Remember to start the corresponding VLM reward server with the matching model before training (see [Step 1](#step-1-start-vlm-reward-server-on-host-outside-docker)).
 
-### Common Parameters
-
-| Parameter | Default | Description |
-|---|---|---|
-| `vlm_reward_scale` | 1.0 | Multiplier applied to VLM reward |
-| `vlm_reward_weight` | 1.0 | Weight of VLM reward in final reward |
-| `vlm_call_interval` | 10 | Call VLM every N environment steps |
-| `vlm_pure_reward` | true | Use only VLM reward (ignore env reward) |
-| `vlm_non_call_reward_mode` | hold | Reward on non-VLM steps: hold / zero / env |
-| `vlm_sample_envs` | 0 | Number of envs to sample per VLM call (0 = all) |
-| `vlm_server_url` | http://localhost:5002 | VLM reward server URL |
 
 ## Architecture
 
@@ -197,7 +186,7 @@ Run the trained policy in ManiSkill and measure success rate:
 source switch_env openpi
 
 # Edit config/eval/closed_loop_eval.yaml to set ckpt_path and model_path
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash run_embodiment.sh closed_loop_eval
+bash run_embodiment.sh closed_loop_eval
 ```
 
 ### Open-Loop Evaluation (Reward Quality Metrics)
