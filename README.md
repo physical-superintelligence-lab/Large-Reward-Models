@@ -137,12 +137,6 @@ bash run_embodiment.sh roboreward       # roboreward mode
 bash run_embodiment.sh robometer        # robometer mode
 ```
 
-### Monitor Training
-
-```bash
-tensorboard --logdir ./results --port 6006
-```
-
 ## Configuration
 
 ### Switching Reward Modes
