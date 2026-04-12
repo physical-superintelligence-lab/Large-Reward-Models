@@ -3,7 +3,7 @@
 
 defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
-  - env/maniskill_put_on_plate_in_scene_25_main@env.eval
+  - env/maniskill_put_on_plate_recording@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -94,7 +94,6 @@ env:
     init_params:
       use_multiple_plates: False
   eval:
-    env_type: recording_maniskill
     total_num_envs: 320         # 80 per GPU x 4
     auto_reset: True
     ignore_terminations: True

@@ -50,7 +50,7 @@ class RecordingManiskillEnv(ManiskillEnv):
         worker_info,
         record_metrics: bool = True,
     ):
-        super().__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics)
+        super().__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics=False)
 
         self.record_trajectories: bool = getattr(cfg, "record_trajectories", True)
         record_output_dir: str = getattr(cfg, "record_output_dir", "./logs/openloop_data/default")
