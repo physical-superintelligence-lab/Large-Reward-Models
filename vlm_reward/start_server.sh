@@ -3,11 +3,7 @@ set -euo pipefail
 
 # Unified VLM Reward Server launcher.
 # Usage:
-#   # For contrastive / completion / progress / roboreward (Qwen3-VL-8B based):
 #   MODEL_PATH=/path/to/vlm_checkpoint bash start_server.sh
-#
-#   # For robometer (Qwen3-VL-4B + reward heads):
-#   MODEL_PATH=/path/to/Robometer-4B BASE_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct bash start_server.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_SCRIPT="${SCRIPT_DIR}/vlm_reward_server.py"
