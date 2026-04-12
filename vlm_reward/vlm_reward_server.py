@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-VLM Reward Server - 在 conda 环境中运行，提供 VLM reward 计算服务
+VLM Reward Server - provides VLM reward computation as an HTTP service.
 
-用法：
-    # 在 conda 环境中启动服务器
+Usage:
+    # Start the server inside a conda environment
     conda activate your_env
     python vlm_reward_server.py --port 5001 --model_path /path/to/vlm_checkpoint
-    
-Docker 容器中的 RLinf 通过 HTTP 请求获取 VLM reward
+
+The RLinf process (e.g. inside a Docker container) obtains VLM rewards via HTTP requests.
 """
 
 import argparse
@@ -149,7 +149,7 @@ def _load_robometer_runtime_config(model_path: str) -> None:
 
 
 def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Instruct", gpu_id: int = 0):
-    """加载 VLM reward 模型（支持 LoRA adapter）- 使用手动合并"""
+    """Load VLM reward model (supports LoRA adapter via manual merge)."""
     global vlm_model, vlm_processor, device
     global robometer_progress_head, robometer_frame_pool_attn, robometer_head_mode
     global robometer_prog_token_id, robometer_vision_start_token_id, robometer_vision_end_token_id
@@ -160,7 +160,6 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     print(f"Loading VLM model on {device}...")
     
-    # 检查是否是 LoRA adapter
     adapter_config_path = os.path.join(model_path, "adapter_config.json")
     is_lora = os.path.exists(adapter_config_path)
     
@@ -168,7 +167,6 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
         print(f"Detected LoRA adapter at {model_path}")
         print(f"Loading base model from {base_model_path}...")
         
-        # 加载基础模型
         vlm_model = Qwen3VLForConditionalGeneration.from_pretrained(
             base_model_path,
             torch_dtype=torch.bfloat16,
@@ -176,12 +174,10 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
             trust_remote_code=True,
         )
         
-        # 手动加载和合并 LoRA adapter
         print(f"Loading LoRA adapter from {model_path}...")
         adapter_path = os.path.join(model_path, "adapter_model.safetensors")
         adapter_weights = load_file(adapter_path)
         
-        # 读取 LoRA 配置
         with open(adapter_config_path, 'r') as f:
             adapter_config = json.load(f)
         
@@ -190,7 +186,7 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
         scaling = lora_alpha / r
         print(f"LoRA config: alpha={lora_alpha}, r={r}, scaling={scaling:.2f}")
         
-        # 分离 LoRA 权重和 full module 权重
+        # Separate LoRA weight pairs from full-rank module weights
         lora_pairs = {}
         full_modules = {}
         
@@ -209,12 +205,10 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
                 clean_key = key.replace('base_model.model.', '')
                 full_modules[clean_key] = value
         
-        # 加载 full modules
         if full_modules:
             print(f"Loading {len(full_modules)} full module parameters...")
             vlm_model.load_state_dict(full_modules, strict=False)
         
-        # 合并 LoRA 权重
         print(f"Merging {len(lora_pairs)} LoRA adapters...")
         model_state_dict = vlm_model.state_dict()
         merged_count = 0
@@ -243,7 +237,6 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
     
     vlm_model.eval()
     
-    # 加载 processor
     processor_path = model_path if not is_lora else base_model_path
     try:
         vlm_processor = AutoProcessor.from_pretrained(
@@ -867,16 +860,14 @@ def compute_vlm_robometer(
 
 
 def extract_progress_score(response: str) -> float:
-    """从模型输出中提取进度分数
-    
-    优先解析 JSON 格式: {"completion_progress": value}
-    然后回退到简单数字匹配
+    """Extract progress score from model output.
+
+    Tries JSON format {"completion_progress": value} first, then falls back to
+    regex-based numeric matching.
     """
     import json
     
-    # Method 1: 优先解析 JSON 格式 {"completion_progress": value}
     try:
-        # 尝试找到 JSON 对象
         json_match = re.search(r'\{[^}]+\}', response)
         if json_match:
             json_str = json_match.group(0)
@@ -884,12 +875,12 @@ def extract_progress_score(response: str) -> float:
             if "completion_progress" in data:
                 val = data["completion_progress"]
                 if val == "NA" or val == "na":
-                    return 0.0  # NA 表示无法评估，返回 0
+                    return 0.0
                 return max(0.0, min(1.0, float(val)))
     except (json.JSONDecodeError, ValueError, TypeError):
         pass
     
-    # Method 2: 匹配 "completion_progress": value 格式
+    # Fallback: match "completion_progress": value pattern without full JSON parse
     try:
         m = re.search(r'"completion_progress"\s*:\s*"?(NA|([0-9.]+))"?', response, re.IGNORECASE)
         if m:
@@ -900,15 +891,15 @@ def extract_progress_score(response: str) -> float:
     except (ValueError, TypeError):
         pass
     
-    # Method 3: 简单数字匹配模式
+    # Fallback: simple numeric pattern matching
     patterns = [
-        r"\b(0(\.[0-9]+)?|1(\.0)?)\b",  # 0.0-1.0 范围的数字
+        r"\b(0(\.[0-9]+)?|1(\.0)?)\b",
         r"Progress[:\s]*([0-9]*\.?[0-9]+)",
         r"progress[:\s]*([0-9]*\.?[0-9]+)",
         r"Score[:\s]*([0-9]*\.?[0-9]+)",
         r"score[:\s]*([0-9]*\.?[0-9]+)",
-        r"([0-9]*\.?[0-9]+)\s*$",  # 末尾数字
-        r"^([0-9]*\.?[0-9]+)",  # 开头数字
+        r"([0-9]*\.?[0-9]+)\s*$",  # trailing number
+        r"^([0-9]*\.?[0-9]+)",  # leading number
     ]
     
     for pattern in patterns:
@@ -916,11 +907,10 @@ def extract_progress_score(response: str) -> float:
         if match:
             try:
                 score = float(match.group(1))
-                return max(0.0, min(1.0, score))  # 限制在 [0, 1]
+                return max(0.0, min(1.0, score))
             except ValueError:
                 continue
     
-    # 如果没有找到，返回默认值
     return 0.0
 
 
@@ -931,8 +921,8 @@ def compute_vlm_reward(
     goal_image: np.ndarray = None,
     initial_image: np.ndarray = None
 ) -> dict:
-    """计算单张图像的 VLM reward
-    
+    """Compute VLM reward for a single image.
+
     Args:
         image: Current observation image (required)
         task_description: Description of the task
@@ -955,15 +945,12 @@ def compute_vlm_reward(
             return Image.fromarray(img)
         return img
     
-    # 转换图像格式
     current_pil = to_pil(image)
     goal_pil = to_pil(goal_image)
     initial_pil = to_pil(initial_image)
     
-    # 收集所有图像
     images_list = []
-    
-    # 构建 prompt - 根据是否有 goal image 使用不同格式
+
     if reward_type == "progress":
         prompt_parts = []
         prompt_parts.append("Task: Estimate the completion progress.")
@@ -971,7 +958,6 @@ def compute_vlm_reward(
         prompt_parts.append("\nYou are given:")
         
         if goal_pil is not None:
-            # 有 goal image - 使用与训练数据一致的完整 prompt
             prompt_parts.append("\n- Goal Standard: <image>")
             images_list.append(goal_pil)
             
@@ -995,7 +981,6 @@ Definitions:
 Output your answer in the following JSON format:
 { "completion_progress": selected_value }""")
         else:
-            # 没有 goal image - 使用简化的 prompt
             if initial_pil is not None:
                 prompt_parts.append("\n- Initial observation: <image>")
                 images_list.append(initial_pil)
@@ -1018,19 +1003,15 @@ Output your answer in the following JSON format:
         
         prompt = "".join(prompt_parts)
     else:
-        # 简单评估模式
         images_list.append(current_pil)
         prompt = f"""Task: {task_description}
 
 Evaluate how well the robot is performing this task.
 Output a score between 0.0 (poor) and 1.0 (excellent)."""
     
-    # 构建消息 - 按顺序添加图像
+    # Replace <image> placeholders with actual image entries
     content = []
-    prompt_with_placeholders = prompt
-    
-    # 将 <image> 占位符替换为实际图像
-    prompt_segments = prompt_with_placeholders.split("<image>")
+    prompt_segments = prompt.split("<image>")
     for i, segment in enumerate(prompt_segments):
         if segment.strip():
             content.append({"type": "text", "text": segment})
@@ -1044,7 +1025,6 @@ Output a score between 0.0 (poor) and 1.0 (excellent)."""
         }
     ]
     
-    # 处理输入
     text = vlm_processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
@@ -1056,17 +1036,15 @@ Output a score between 0.0 (poor) and 1.0 (excellent)."""
         return_tensors="pt",
     ).to(device)
     
-    # 生成输出
     with torch.no_grad():
         generated_ids = vlm_model.generate(
             **inputs,
-            max_new_tokens=128,  # 增加以支持 JSON 输出
+            max_new_tokens=128,
             do_sample=False,
             temperature=None,
             top_p=None,
         )
     
-    # 解码输出
     generated_ids_trimmed = [
         out_ids[len(in_ids):] 
         for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -1077,10 +1055,8 @@ Output a score between 0.0 (poor) and 1.0 (excellent)."""
         clean_up_tokenization_spaces=False
     )[0]
     
-    # 提取分数
     score = extract_progress_score(response)
-    
-    # Debug logging (可以通过环境变量控制)
+
     import os
     if os.environ.get("VLM_DEBUG", "0") == "1":
         print(f"[VLM Debug] Task: {task_description[:50]}...")
@@ -1099,7 +1075,7 @@ def compute_vlm_rewards_batch(
     task_descriptions: list,
     reward_type: str = "progress"
 ) -> list:
-    """批量计算 VLM rewards"""
+    """Compute VLM rewards for a batch of images."""
     results = []
     for img, task in zip(images, task_descriptions):
         result = compute_vlm_reward(img, task, reward_type)
@@ -1109,7 +1085,7 @@ def compute_vlm_rewards_batch(
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """健康检查接口"""
+    """Health check endpoint."""
     return jsonify({
         "status": "healthy",
         "model_loaded": vlm_model is not None
@@ -1118,16 +1094,12 @@ def health_check():
 
 @app.route('/compute_reward', methods=['POST'])
 def compute_reward_endpoint():
-    """计算单张图像的 VLM reward"""
+    """Compute VLM reward for a single image."""
     try:
         data = request.json
-        
+
         def decode_image(img_data, fallback_shape=None, fallback_dtype='uint8'):
-            """解码图像数据 - 支持两种格式
-            
-            格式1 (dict): {"data": base64_str, "shape": [...], "dtype": "..."}
-            格式2 (flat): image字段是base64, 单独的image_shape, image_dtype字段
-            """
+            """Decode image from either a dict or flat base64 payload."""
             if isinstance(img_data, dict):
                 image_bytes = base64.b64decode(img_data['data'])
                 shape = tuple(img_data['shape'])
@@ -1138,7 +1110,6 @@ def compute_reward_endpoint():
                 dtype = fallback_dtype
             return np.frombuffer(image_bytes, dtype=dtype).reshape(shape)
         
-        # 解码当前观察图像
         if isinstance(data['image'], dict):
             image = decode_image(data['image'])
             default_shape = data['image']['shape']
@@ -1153,7 +1124,6 @@ def compute_reward_endpoint():
         task_description = data['task_description']
         reward_type = data.get('reward_type', 'progress')
         
-        # 可选：解码 goal 图像
         goal_image = None
         if 'goal_image' in data and data['goal_image']:
             if isinstance(data['goal_image'], dict):
@@ -1163,7 +1133,6 @@ def compute_reward_endpoint():
                 goal_dtype = data.get('goal_image_dtype', default_dtype)
                 goal_image = decode_image(data['goal_image'], goal_shape, goal_dtype)
         
-        # 可选：解码 initial 图像
         initial_image = None
         if 'initial_image' in data and data['initial_image']:
             if isinstance(data['initial_image'], dict):
@@ -1195,7 +1164,7 @@ def compute_reward_endpoint():
 
 @app.route('/compute_rewards_batch', methods=['POST'])
 def compute_rewards_batch_endpoint():
-    """批量计算 VLM rewards"""
+    """Batch VLM reward computation endpoint."""
     try:
         data = request.json
         
@@ -1271,10 +1240,7 @@ def compute_vlm_completion(
     image: np.ndarray,
     task_description: str,
 ) -> dict:
-    """判断任务是否完成 (yes/no) → 1.0/0.0
-
-    使用与训练/测试一致的 apply_chat_template + generate 方式。
-    """
+    """Determine whether the task is completed (yes/no) and return 1.0 or 0.0."""
     global vlm_model, vlm_processor, device
 
     if vlm_model is None:
@@ -1399,7 +1365,7 @@ def compute_vlm_completion(
 
 @app.route('/compute_completion', methods=['POST'])
 def compute_completion_endpoint():
-    """判断任务是否完成"""
+    """Task completion check endpoint."""
     try:
         data = request.json
 
@@ -1518,10 +1484,8 @@ def main():
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use")
     args = parser.parse_args()
     
-    # 加载模型
     load_vlm_model(args.model_path, args.base_model_path, args.gpu_id)
-    
-    # 启动服务器
+
     print(f"Starting VLM Reward Server on {args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=False)
 

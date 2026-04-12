@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-VLM Reward Client - 在 Docker 容器中使用，通过 HTTP 请求获取 VLM reward
+VLM Reward Client - Fetches VLM rewards via HTTP, designed for use inside Docker containers.
 
-用法：
+Usage:
     from vlm_reward_client import VLMRewardClient
-    
+
     client = VLMRewardClient(server_url="http://host.docker.internal:5001")
     reward = client.compute_reward(image, task_description)
 """
@@ -17,7 +17,7 @@ import requests
 
 
 class VLMRewardClient:
-    """VLM Reward Client - 通过 HTTP 与 VLM Reward Server 通信"""
+    """VLM Reward Client - communicates with the VLM Reward Server over HTTP."""
     
     def __init__(
         self,
@@ -25,19 +25,19 @@ class VLMRewardClient:
         timeout: float = 30.0,
     ):
         """
-        初始化 VLM Reward Client
-        
+        Initialize the VLM Reward Client.
+
         Args:
-            server_url: VLM Reward Server 的地址
-                - 如果在 Docker 中访问宿主机：http://host.docker.internal:5001
-                - 如果在同一机器：http://localhost:5001
-            timeout: 请求超时时间（秒）
+            server_url: Address of the VLM Reward Server.
+                - From inside Docker to host: http://host.docker.internal:5001
+                - On the same machine: http://localhost:5001
+            timeout: Request timeout in seconds.
         """
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
         
     def health_check(self) -> bool:
-        """检查服务器是否可用"""
+        """Check whether the server is available and the model is loaded."""
         try:
             response = requests.get(
                 f"{self.server_url}/health",
@@ -49,7 +49,7 @@ class VLMRewardClient:
             return False
     
     def _encode_image(self, image: np.ndarray) -> dict:
-        """将图像编码为 base64"""
+        """Encode an image as a base64 dict with shape and dtype metadata."""
         image_bytes = image.tobytes()
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
         return {
@@ -64,7 +64,7 @@ class VLMRewardClient:
         task_description: str,
     ) -> dict:
         """
-        判断任务是否完成 (yes/no)
+        Determine whether the task is completed (yes/no).
 
         Returns:
             dict: {"score": 1.0 or 0.0, "completed": bool, "response": str, "success": bool}
@@ -222,27 +222,24 @@ class VLMRewardClient:
         initial_image: np.ndarray = None,
     ) -> dict:
         """
-        计算单张图像的 VLM reward
-        
+        Compute the VLM reward for a single image.
+
         Args:
-            image: 当前观察的 RGB 图像，numpy array，shape (H, W, 3)，dtype uint8
-            task_description: 任务描述
-            reward_type: 奖励类型，"progress" 或 "quality"
-            goal_image: （可选）目标状态的 RGB 图像
-            initial_image: （可选）初始状态的 RGB 图像
-            
+            image: Current observation RGB image, numpy array, shape (H, W, 3), dtype uint8.
+            task_description: Task description.
+            reward_type: Reward type, "progress" or "quality".
+            goal_image: (optional) Goal-state RGB image.
+            initial_image: (optional) Initial-state RGB image.
+
         Returns:
             dict: {"score": float, "response": str, "success": bool}
         """
-        # 确保图像格式正确
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
         
-        # 编码图像
         image_bytes = image.tobytes()
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
         
-        # 构建请求数据
         request_data = {
             "image": image_b64,
             "image_shape": list(image.shape),
@@ -251,7 +248,6 @@ class VLMRewardClient:
             "reward_type": reward_type,
         }
         
-        # 添加可选的 goal image
         if goal_image is not None:
             if goal_image.dtype != np.uint8:
                 goal_image = (goal_image * 255).astype(np.uint8)
@@ -259,7 +255,6 @@ class VLMRewardClient:
             request_data["goal_image_shape"] = list(goal_image.shape)
             request_data["goal_image_dtype"] = str(goal_image.dtype)
         
-        # 添加可选的 initial image
         if initial_image is not None:
             if initial_image.dtype != np.uint8:
                 initial_image = (initial_image * 255).astype(np.uint8)
@@ -267,7 +262,6 @@ class VLMRewardClient:
             request_data["initial_image_shape"] = list(initial_image.shape)
             request_data["initial_image_dtype"] = str(initial_image.dtype)
         
-        # 发送请求
         try:
             response = requests.post(
                 f"{self.server_url}/compute_reward",
@@ -298,11 +292,11 @@ class VLMRewardClient:
         task_description: str,
     ) -> dict:
         """
-        使用视频帧序列进行 Robometer/RoboReward 风格打分。
+        Score a video frame sequence using Robometer/RoboReward-style evaluation.
 
         Args:
-            frames: RGB 帧列表，元素 shape=(H,W,3), dtype=uint8
-            task_description: 任务描述
+            frames: List of RGB frames, each shape=(H,W,3), dtype=uint8.
+            task_description: Task description.
 
         Returns:
             dict: {"score": float, "raw_score": Optional[int], "response": str, "progress_per_frame": list[float], "success": bool}
@@ -378,27 +372,25 @@ class VLMRewardClient:
         reward_type: str = "progress",
     ) -> List[dict]:
         """
-        批量计算 VLM rewards
-        
+        Compute VLM rewards for a batch of images.
+
         Args:
-            images: 图像列表
-            task_descriptions: 任务描述（单个字符串或列表）
-            reward_type: 奖励类型
-            
+            images: List of images.
+            task_descriptions: Task description(s) (a single string or a list).
+            reward_type: Reward type.
+
         Returns:
-            List[dict]: 每张图像的结果
+            List[dict]: Result for each image.
         """
         if isinstance(task_descriptions, str):
             task_descriptions = [task_descriptions] * len(images)
         
-        # 编码所有图像
         encoded_images = []
         for image in images:
             if image.dtype != np.uint8:
                 image = (image * 255).astype(np.uint8)
             encoded_images.append(self._encode_image(image))
         
-        # 发送请求
         try:
             response = requests.post(
                 f"{self.server_url}/compute_rewards_batch",
@@ -407,7 +399,7 @@ class VLMRewardClient:
                     "task_descriptions": task_descriptions,
                     "reward_type": reward_type,
                 },
-                timeout=self.timeout * len(images)  # 批量请求增加超时
+                timeout=self.timeout * len(images)  # scale timeout for batch size
             )
             
             result = response.json()
@@ -426,9 +418,9 @@ class VLMRewardClient:
 
 class VLMRewardWrapper:
     """
-    VLM Reward Wrapper - 封装 VLM reward 计算，支持缓存和相对奖励
-    
-    用于集成到 LiberoEnv 中
+    VLM Reward Wrapper - wraps VLM reward computation with caching and relative rewards.
+
+    Designed for integration into LiberoEnv.
     """
     
     def __init__(
@@ -441,15 +433,15 @@ class VLMRewardWrapper:
         vlm_reward_weight: float = 0.7,
     ):
         """
-        初始化 VLM Reward Wrapper
-        
+        Initialize the VLM Reward Wrapper.
+
         Args:
-            server_url: VLM Reward Server 地址
-            reward_type: 奖励类型
-            reward_scale: 奖励缩放系数
-            use_relative_reward: 是否使用相对奖励（当前分数 - 上一步分数）
-            sparse_reward_weight: 稀疏奖励权重
-            vlm_reward_weight: VLM 奖励权重
+            server_url: VLM Reward Server address.
+            reward_type: Reward type.
+            reward_scale: Reward scaling factor.
+            use_relative_reward: Whether to use relative reward (current score - previous step score).
+            sparse_reward_weight: Weight for sparse environment reward.
+            vlm_reward_weight: Weight for VLM reward.
         """
         self.client = VLMRewardClient(server_url)
         self.reward_type = reward_type
@@ -458,15 +450,15 @@ class VLMRewardWrapper:
         self.sparse_reward_weight = sparse_reward_weight
         self.vlm_reward_weight = vlm_reward_weight
         
-        # 缓存上一步的 VLM scores（用于计算相对奖励）
+        # Cache previous-step VLM scores for relative reward computation
         self.prev_vlm_scores = None
-        
-        # 检查服务器是否可用
+
+
         if not self.client.health_check():
             print("WARNING: VLM Reward Server is not available!")
     
     def reset(self, num_envs: int):
-        """重置缓存（在环境重置时调用）"""
+        """Reset cached scores (call on environment reset)."""
         self.prev_vlm_scores = np.zeros(num_envs, dtype=np.float32)
     
     def compute_combined_reward(
@@ -477,41 +469,36 @@ class VLMRewardWrapper:
         dones: np.ndarray,
     ) -> np.ndarray:
         """
-        计算组合奖励（VLM reward + sparse reward）
-        
+        Compute combined reward (VLM reward + sparse reward).
+
         Args:
-            images: 当前观测图像列表
-            task_descriptions: 任务描述
-            sparse_rewards: 环境的稀疏奖励
-            dones: 是否结束
-            
+            images: List of current observation images.
+            task_descriptions: Task description(s).
+            sparse_rewards: Sparse rewards from the environment.
+            dones: Done flags.
+
         Returns:
-            组合奖励
+            Combined rewards and raw VLM scores.
         """
         num_envs = len(images)
         
-        # 初始化 prev_vlm_scores
         if self.prev_vlm_scores is None or len(self.prev_vlm_scores) != num_envs:
             self.prev_vlm_scores = np.zeros(num_envs, dtype=np.float32)
         
-        # 计算 VLM rewards
         results = self.client.compute_rewards_batch(images, task_descriptions, self.reward_type)
         vlm_scores = np.array([r["score"] for r in results], dtype=np.float32)
         
-        # 计算 VLM reward
         if self.use_relative_reward:
             vlm_rewards = (vlm_scores - self.prev_vlm_scores) * self.reward_scale
         else:
             vlm_rewards = vlm_scores * self.reward_scale
         
-        # 更新缓存
         self.prev_vlm_scores = vlm_scores.copy()
-        
-        # 对于结束的环境，重置缓存
+
+        # Reset cached scores for finished environments
         if dones is not None:
             self.prev_vlm_scores[dones] = 0.0
         
-        # 组合奖励
         combined_rewards = (
             self.sparse_reward_weight * sparse_rewards +
             self.vlm_reward_weight * vlm_rewards
@@ -520,7 +507,6 @@ class VLMRewardWrapper:
         return combined_rewards, vlm_scores
 
 
-# 测试代码
 if __name__ == "__main__":
     import argparse
     
@@ -530,7 +516,6 @@ if __name__ == "__main__":
     
     client = VLMRewardClient(server_url=args.server_url)
     
-    # 健康检查
     print("Checking server health...")
     if client.health_check():
         print("Server is healthy!")
@@ -538,7 +523,6 @@ if __name__ == "__main__":
         print("Server is not available!")
         exit(1)
     
-    # 测试计算奖励
     print("\nTesting reward computation...")
     test_image = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
     task_description = "pick up the red cube and place it on the blue plate"
