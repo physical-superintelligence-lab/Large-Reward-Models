@@ -90,8 +90,6 @@ def compute_progress_completion_metrics(trajs_data: list) -> dict:
     labels = [int(t["episode_success"]) for t in trajs_data]
     n_success = sum(labels)
     n_fail = len(labels) - n_success
-    metrics["n_success"] = n_success
-    metrics["n_failure"] = n_fail
 
     has_scores = all(len(t["vlm_completion"]) > 0 for t in trajs_data)
     if not has_scores:
@@ -163,8 +161,6 @@ def compute_contrastive_metrics(trajs_data: list) -> dict:
     labels = [int(t["episode_success"]) for t in trajs_data]
     n_success = sum(labels)
     n_fail = len(labels) - n_success
-    metrics["n_success"] = n_success
-    metrics["n_failure"] = n_fail
 
     has_scores = all(len(t["vlm_comparison"]) > 0 for t in trajs_data)
     if not has_scores:
@@ -256,10 +252,6 @@ def main():
 
     trajs_data = [extract_trajectory_data(t) for t in all_trajectories]
 
-    n_success = sum(1 for t in trajs_data if t["episode_success"])
-    n_failure = len(trajs_data) - n_success
-    print(f"Success: {n_success}, Failure: {n_failure}")
-
     # Compute mode-specific metrics
     if detected_mode == "comparison":
         print("\n--- Contrastive (Comparison) Metrics ---")
@@ -268,15 +260,21 @@ def main():
         print(f"\n--- Progress/Completion Metrics (mode={detected_mode}) ---")
         mode_metrics = compute_progress_completion_metrics(trajs_data)
 
+    # Filter out n_success / n_failure from printed output
     for k, v in mode_metrics.items():
+        if k in ("n_success", "n_failure"):
+            continue
         if isinstance(v, float):
             print(f"  {k}: {v:.4f}")
         else:
             print(f"  {k}: {v}")
 
+    n_success = sum(1 for t in trajs_data if t["episode_success"])
+    n_failure = len(trajs_data) - n_success
+
     all_metrics = {
         "mode": detected_mode,
-        "metrics": mode_metrics,
+        "metrics": {k: v for k, v in mode_metrics.items() if k not in ("n_success", "n_failure")},
         "meta": {
             "scores_paths": args.scores_path,
             "n_trajectories": len(trajs_data),
