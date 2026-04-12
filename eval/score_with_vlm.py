@@ -234,7 +234,7 @@ def score_single_trajectory(
     task_description: str,
     mode: str,
     comparison_interval: int = 1,
-    call_interval: int = 13,
+    call_interval: int = 1,
 ) -> dict:
     """Score a single trajectory with completion and/or comparison."""
     result = {

@@ -11,7 +11,7 @@ Built on [RLinf](https://github.com/RLinf/RLinf) framework with [ManiSkill](http
 | **Contrastive** | LRM-contrastive (Qwen3-VL-8B) | +1 / -1 / 0 | Compares two consecutive frames to determine progress direction |
 | **Completion** | LRM-completion | Binary 0 / 1 | Single-frame yes/no task completion judgment |
 | **Progress** | LRM-progress | Continuous 0~1 | Single-frame task completion progress estimation |
-| **RoboReward** | RoboReward-8B | Discrete 1-5 → 0~1 | Scores a video trajectory on a 1-5 rubric |
+| **RoboReward** | RoboReward-8B | Discrete 1-5 | Scores a video trajectory on a 1-5 rubric |
 | **Robometer** | Robometer-4B | Continuous 0~1 per frame | Per-frame progress via custom reward heads |
 
 ## Prerequisites
