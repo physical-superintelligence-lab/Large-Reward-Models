@@ -279,10 +279,10 @@ def main():
                         help="Number of parallel workers (1 = sequential)")
     parser.add_argument("--max_trajs", type=int, default=0,
                         help="Max trajectories to score (0 = all)")
-    parser.add_argument("--comparison_interval", type=int, default=10,
-                        help="Frame interval for comparison mode (default: 10, matching RL training vlm_call_interval)")
-    parser.add_argument("--call_interval", type=int, default=10,
-                        help="Frame interval for progress mode: score every N steps (default: 10)")
+    parser.add_argument("--comparison_interval", type=int, default=1,
+                        help="Frame interval for comparison mode (default: 1, score every step)")
+    parser.add_argument("--call_interval", type=int, default=1,
+                        help="Frame interval for progress mode: score every N steps (default: 1)")
     args = parser.parse_args()
 
     # Default output path

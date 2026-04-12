@@ -198,36 +198,33 @@ Evaluate VLM reward quality by scoring recorded trajectories and computing metri
 **Step 1: Collect trajectories** (inside Docker, VLM server not needed)
 
 ```bash
-bash eval_embodiment.sh open_loop_collect "" \
-  actor.model.model_path=/path/to/RLinf-Pi05-ManiSkill-25Main-SFT \
-  rollout.model.model_path=/path/to/RLinf-Pi05-ManiSkill-25Main-SFT \
-  runner.ckpt_path=/path/to/checkpoint.pt \
+bash eval_embodiment.sh open_loop_collect MANISKILL \
+  actor.model.model_path=/path/to/checkpoint_or_SFT \
+  rollout.model.model_path=/path/to/checkpoint_or_SFT \
   env.eval.record_output_dir=./logs/openloop_data/my_exp
 ```
 
-Omit `runner.ckpt_path` to evaluate the SFT baseline without a checkpoint.
+For the SFT baseline, pass the SFT model path. For an RL checkpoint, pass the checkpoint directory (which must contain `actor/model_state_dict/full_weights.pt`).
 
 **Step 2: Score with VLM** (on host, with VLM server running)
+
+Run for each worker directory under `record_output_dir`:
 
 ```bash
 python eval/score_with_vlm.py \
   --data_dir ./logs/openloop_data/my_exp/worker_0 \
-  --vlm_url http://localhost:5002 \
-  --mode <progress|completion|comparison> \
-  --output ./logs/openloop_data/my_exp/worker_0/vlm_scores.json
+  --mode <progress|completion|comparison>
 ```
 
-Run for each worker directory. See `python eval/score_with_vlm.py --help` for all options.
-
 **Step 3: Compute metrics**
+
+Pass all workers' `vlm_scores.json` as `--scores_path` to merge results before computing metrics:
 
 ```bash
 python eval/compute_openloop_metrics.py \
   --scores_path ./logs/openloop_data/my_exp/worker_0/vlm_scores.json \
-  --output_dir ./logs/openloop_data/my_exp/metrics
+               ./logs/openloop_data/my_exp/worker_1/vlm_scores.json
 ```
-
-Pass multiple `--scores_path` arguments to merge results across workers before computing metrics.
 
 The script auto-detects the scoring mode and outputs mode-specific metrics:
 
@@ -238,7 +235,7 @@ The script auto-detects the scoring mode and outputs mode-specific metrics:
 | `roc_auc` | AUC for success vs failure classification |
 | `pairwise_acc_pct` | Fraction of success/failure pairs correctly ranked (%) |
 | `global_pearson` | Pearson correlation across all trajectories |
-| `per_traj_pearson_mean` | Per-trajectory Pearson correlation, averaged |
+| `per_traj_pearson` | Per-trajectory Pearson correlation, averaged |
 
 **Contrastive (comparison) metrics:**
 
