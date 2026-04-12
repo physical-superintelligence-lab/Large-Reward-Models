@@ -3,7 +3,7 @@
 
 defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
-  - env/maniskill_put_on_plate_in_scene_25_main@env.eval
+  - env/maniskill_put_on_plate_recording@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -102,7 +102,6 @@ env:
     use_fixed_reset_state_ids: True
     group_size: ${algorithm.group_size}
     is_eval: True
-    env_type: recording_maniskill
     # Recording settings
     record_trajectories: true
     record_output_dir: "./logs/openloop_data/default"
