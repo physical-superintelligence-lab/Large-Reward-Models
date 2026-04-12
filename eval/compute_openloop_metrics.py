@@ -298,23 +298,27 @@ def compute_temporal_metrics(trajs_data: list) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Compute open-loop VLM reward metrics")
-    parser.add_argument("--scores_path", type=str, required=True,
-                        help="Path to vlm_scores.json from score_with_vlm.py")
+    parser.add_argument("--scores_path", type=str, nargs="+", required=True,
+                        help="Path(s) to vlm_scores.json from score_with_vlm.py (multiple paths are merged)")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output directory for metrics")
     args = parser.parse_args()
 
     if args.output_dir is None:
-        args.output_dir = os.path.join(os.path.dirname(args.scores_path), "metrics")
+        args.output_dir = os.path.join(os.path.dirname(args.scores_path[0]), "metrics")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    print(f"Loading scores from {args.scores_path}")
-    data = load_scores(args.scores_path)
-    trajectories = data.get("trajectories", [])
-    print(f"Loaded {len(trajectories)} trajectories")
+    all_trajectories = []
+    for path in args.scores_path:
+        print(f"Loading scores from {path}")
+        data = load_scores(path)
+        trajs = data.get("trajectories", [])
+        print(f"  {len(trajs)} trajectories")
+        all_trajectories.extend(trajs)
+    print(f"Total trajectories: {len(all_trajectories)}")
 
-    trajs_data = [extract_trajectory_data(t) for t in trajectories]
+    trajs_data = [extract_trajectory_data(t) for t in all_trajectories]
 
     n_success = sum(1 for t in trajs_data if t["episode_success"])
     n_failure = len(trajs_data) - n_success
@@ -340,7 +344,7 @@ def main():
         "correlation": corr_metrics,
         "temporal": temp_metrics,
         "meta": {
-            "scores_path": args.scores_path,
+            "scores_paths": args.scores_path,
             "n_trajectories": len(trajs_data),
             "n_success": n_success,
             "n_failure": n_failure,
