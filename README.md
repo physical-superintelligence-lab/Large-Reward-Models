@@ -109,7 +109,7 @@ Training requires two processes: a **VLM reward server** on the host and the **R
 ```bash
 cd Large-Reward-Models/vlm_reward
 
-MODEL_PATH=/path/to/VLM reward model GPU_ID=0 bash start_server.sh
+MODEL_PATH=/path/to/VLMrewardmodel GPU_ID=0 bash start_server.sh
 
 ```
 
