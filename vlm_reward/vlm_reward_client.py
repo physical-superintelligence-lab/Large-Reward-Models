@@ -17,7 +17,7 @@ import requests
 
 
 class VLMRewardClient:
-    """VLM Reward Client - Communicates with the VLM Reward Server over HTTP."""
+    """VLM Reward Client - communicates with the VLM Reward Server over HTTP."""
     
     def __init__(
         self,
