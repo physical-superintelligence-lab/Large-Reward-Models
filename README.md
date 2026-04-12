@@ -229,18 +229,24 @@ python eval/compute_openloop_metrics.py \
 
 Pass multiple `--scores_path` arguments to merge results across workers before computing metrics.
 
-**Metrics computed:**
+The script auto-detects the scoring mode and outputs mode-specific metrics:
 
-| Category | Metric | Description |
-|---|---|---|
-| **Discriminative** | `roc_auc` | AUC for success vs failure classification |
-| | `pairwise_accuracy` | Fraction of success/failure pairs correctly ranked |
-| | `best_accuracy` | Best threshold classification accuracy |
-| **Correlation** | `pearson/spearman/kendall_mean` | Per-trajectory correlation between VLM score and oracle reward, averaged across trajectories |
-| | `global_pearson` | Correlation computed across all trajectories jointly |
-| **Temporal** | `variance_mean` | Mean per-trajectory score variance (stability) |
-| | `jump_freq_mean` | Frequency of large score jumps between frames |
-| | `positive_frac_mean` | Fraction of frames with positive VLM score |
+**Progress / Completion metrics:**
+
+| Metric | Description |
+|---|---|
+| `roc_auc` | AUC for success vs failure classification |
+| `pairwise_acc_pct` | Fraction of success/failure pairs correctly ranked (%) |
+| `global_pearson` | Pearson correlation across all trajectories |
+| `per_traj_pearson_mean` | Per-trajectory Pearson correlation, averaged |
+
+**Contrastive (comparison) metrics:**
+
+| Metric | Description |
+|---|---|
+| `direction_acc_pct` | Fraction of VLM direction predictions matching oracle (%) |
+| `progress_recall_pct` | When oracle shows progress, how often VLM predicts positive (%) |
+| `monotonicity_success` | Temporal consistency of cumulative score in successful episodes |
 
 ## File Structure
 
