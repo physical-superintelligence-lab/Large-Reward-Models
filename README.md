@@ -193,37 +193,54 @@ python eval_embodied_agent.py \
 
 ### Open-Loop Evaluation (Reward Quality Metrics)
 
-Evaluate VLM reward quality by scoring recorded trajectories and computing discriminative accuracy, correlation, and temporal consistency metrics.
+Evaluate VLM reward quality by scoring recorded trajectories and computing metrics on how well the VLM reward correlates with ground-truth oracle rewards.
 
-**Step 1: Collect trajectories**
+**Step 1: Collect trajectories** (inside Docker, VLM server not needed)
 
 ```bash
-# Inside Docker - runs policy and saves frames + oracle rewards
-bash run_embodiment.sh open_loop_collect
+bash eval_embodiment.sh open_loop_collect "" \
+  actor.model.model_path=/path/to/RLinf-Pi05-ManiSkill-25Main-SFT \
+  rollout.model.model_path=/path/to/RLinf-Pi05-ManiSkill-25Main-SFT \
+  runner.ckpt_path=/path/to/checkpoint.pt \
+  env.eval.record_output_dir=./logs/openloop_data/my_exp
 ```
+
+Omit `runner.ckpt_path` to evaluate the SFT baseline without a checkpoint.
 
 **Step 2: Score with VLM** (on host, with VLM server running)
 
 ```bash
-cd RLinf/examples/embodiment/eval
-
-# Contrastive mode
-python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode comparison
-
-# Completion mode
-python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode completion
-
-# Progress mode
-python score_with_vlm.py --data_dir <trajectory_dir>/worker_0 --mode progress
+python eval/score_with_vlm.py \
+  --data_dir ./logs/openloop_data/my_exp/worker_0 \
+  --vlm_url http://localhost:5002 \
+  --mode <progress|completion|comparison> \
+  --output ./logs/openloop_data/my_exp/worker_0/vlm_scores.json
 ```
+
+Run for each worker directory. See `python eval/score_with_vlm.py --help` for all options.
 
 **Step 3: Compute metrics**
 
 ```bash
-python compute_openloop_metrics.py --scores_path <trajectory_dir>/worker_0/vlm_scores.json
+python eval/compute_openloop_metrics.py \
+  --scores_path ./logs/openloop_data/my_exp/worker_0/vlm_scores.json \
+  --output_dir ./logs/openloop_data/my_exp/metrics
 ```
 
-Outputs `openloop_metrics.json` with discriminative accuracy (ROC-AUC, pairwise ranking), correlation (Pearson, Spearman, Kendall), and temporal consistency metrics.
+Pass multiple `--scores_path` arguments to merge results across workers before computing metrics.
+
+**Metrics computed:**
+
+| Category | Metric | Description |
+|---|---|---|
+| **Discriminative** | `roc_auc` | AUC for success vs failure classification |
+| | `pairwise_accuracy` | Fraction of success/failure pairs correctly ranked |
+| | `best_accuracy` | Best threshold classification accuracy |
+| **Correlation** | `pearson/spearman/kendall_mean` | Per-trajectory correlation between VLM score and oracle reward, averaged across trajectories |
+| | `global_pearson` | Correlation computed across all trajectories jointly |
+| **Temporal** | `variance_mean` | Mean per-trajectory score variance (stability) |
+| | `jump_freq_mean` | Frequency of large score jumps between frames |
+| | `positive_frac_mean` | Fraction of frames with positive VLM score |
 
 ## File Structure
 
