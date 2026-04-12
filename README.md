@@ -109,11 +109,8 @@ Training requires two processes: a **VLM reward server** on the host and the **R
 ```bash
 cd Large-Reward-Models/vlm_reward
 
-# For contrastive / completion / progress / roboreward (Qwen3-VL-8B based):
-MODEL_PATH=/path/to/LRM-contrastive GPU_ID=0 bash start_server.sh
+MODEL_PATH=/path/to/VLM reward model GPU_ID=0 bash start_server.sh
 
-# For robometer (Qwen3-VL-4B + reward heads):
-MODEL_PATH=/path/to/Robometer-4B BASE_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct GPU_ID=0 bash start_server.sh
 ```
 
 The server starts on port 5002 by default. Verify it's running:
