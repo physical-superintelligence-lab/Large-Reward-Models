@@ -128,7 +128,7 @@ def score_trajectory_comparison(
     traj: dict,
     client: VLMRewardClient,
     task_description: str,
-    comparison_interval: int = 10,
+    comparison_interval: int = 1,
 ) -> list:
     """Score frame pairs using comparison mode with configurable interval.
 
@@ -190,7 +190,7 @@ def score_trajectory_progress(
     traj: dict,
     client: VLMRewardClient,
     task_description: str,
-    call_interval: int = 10,
+    call_interval: int = 1,
 ) -> list:
     """Score frames every call_interval steps using single-frame progress mode (0.X or 1.0)."""
     scores = []
@@ -233,8 +233,8 @@ def score_single_trajectory(
     client: VLMRewardClient,
     task_description: str,
     mode: str,
-    comparison_interval: int = 10,
-    call_interval: int = 10,
+    comparison_interval: int = 1,
+    call_interval: int = 13,
 ) -> dict:
     """Score a single trajectory with completion and/or comparison."""
     result = {
