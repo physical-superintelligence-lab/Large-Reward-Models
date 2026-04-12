@@ -7,7 +7,7 @@ Usage:
     conda activate your_env
     python vlm_reward_server.py --port 5001 --model_path /path/to/vlm_checkpoint
 
-The RLinf process (e.g. inside a Docker container) obtains VLM rewards via HTTP requests.
+The RLinf process (e.g. inside a docker container) obtains VLM rewards via HTTP requests.
 """
 
 import argparse
