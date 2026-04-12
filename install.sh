@@ -85,7 +85,7 @@ with open(action_file, "r") as f:
 if "VLM_MANISKILL" not in content:
     content = content.replace(
         "== SupportedEnvType.MANISKILL",
-        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
+        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL, SupportedEnvType.RECORDING_MANISKILL)"
     )
     with open(action_file, "w") as f:
         f.write(content)
@@ -101,7 +101,7 @@ with open(config_file, "r") as f:
 if "VLM_MANISKILL" not in content:
     content = content.replace(
         "== SupportedEnvType.MANISKILL",
-        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL)"
+        "in (SupportedEnvType.MANISKILL, SupportedEnvType.VLM_MANISKILL, SupportedEnvType.RECORDING_MANISKILL)"
     )
     with open(config_file, "w") as f:
         f.write(content)
