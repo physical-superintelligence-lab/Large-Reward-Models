@@ -19,6 +19,9 @@ echo "=== Installing Large-Reward-Models into $RLINF_DIR ==="
 echo "[1/4] Copying vlm_maniskill_env.py ..."
 cp "$SCRIPT_DIR/envs/vlm_maniskill_env.py" "$RLINF_DIR/rlinf/envs/maniskill/vlm_maniskill_env.py"
 
+echo "[1/4] Copying recording_maniskill_env.py ..."
+cp "$SCRIPT_DIR/envs/recording_maniskill_env.py" "$RLINF_DIR/rlinf/envs/maniskill/recording_maniskill_env.py"
+
 # 2. Copy VLM reward client
 echo "[2/4] Copying vlm_reward_client.py ..."
 cp "$SCRIPT_DIR/vlm_reward/vlm_reward_client.py" "$RLINF_DIR/rlinf/envs/maniskill/vlm_reward_client.py"
@@ -53,7 +56,7 @@ if "VLM_MANISKILL" not in content:
     # Add enum entry after MANISKILL = "maniskill"
     content = content.replace(
         'MANISKILL = "maniskill"',
-        'MANISKILL = "maniskill"\n    VLM_MANISKILL = "vlm_maniskill"'
+        'MANISKILL = "maniskill"\n    VLM_MANISKILL = "vlm_maniskill"\n    RECORDING_MANISKILL = "recording_maniskill"'
     )
     # Add env class registration before "else:\n        raise NotImplementedError"
     content = content.replace(
@@ -62,6 +65,10 @@ if "VLM_MANISKILL" not in content:
         '        from rlinf.envs.maniskill.vlm_maniskill_env import VLMManiskillEnv\n'
         '\n'
         '        return VLMManiskillEnv\n'
+        '    elif env_type == SupportedEnvType.RECORDING_MANISKILL:\n'
+        '        from rlinf.envs.maniskill.recording_maniskill_env import RecordingManiskillEnv\n'
+        '\n'
+        '        return RecordingManiskillEnv\n'
         '    else:\n        raise NotImplementedError'
     )
     with open(init_file, "w") as f:

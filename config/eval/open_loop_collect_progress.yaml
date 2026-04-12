@@ -1,3 +1,10 @@
+# OpenLoop Trajectory Collection - Progress Mode RL Checkpoint
+# Collects trajectories using the RL-trained model (VLM reward progress mode).
+# After collection, score with:
+#   python eval/score_with_vlm.py --data_dir <record_output_dir>/worker_0 --mode progress
+# Then compute metrics:
+#   python eval/compute_openloop_metrics.py --scores_path <data_dir>/vlm_scores.json
+
 defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
   - env/maniskill_put_on_plate_recording@env.eval
@@ -22,7 +29,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_eval_pi05_recording_4gpu"
+    experiment_name: "openloop_collect_progress_rl"
     logger_backends: ["tensorboard"]
 
   max_epochs: 1
@@ -32,7 +39,7 @@ runner:
   save_interval: 999
 
   resume_dir: null
-  ckpt_path: null
+  ckpt_path: null  # set to the actor checkpoint, e.g. results/<exp>/checkpoints/global_step_30/actor/model_state_dict/full_weights.pt
 
 algorithm:
   normalize_advantages: True
@@ -41,7 +48,7 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  eval_rollout_epoch: 1       # 160 envs × 1 epoch = 160 trajectories (record 80)
+  eval_rollout_epoch: 1       # 160 envs x 1 epoch = 160 trajectories (record 80)
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
@@ -83,7 +90,7 @@ env:
   group_name: "EnvGroup"
   enable_offload: False
   train:
-    total_num_envs: 320         # 80 per GPU × 4
+    total_num_envs: 320         # 80 per GPU x 4
     auto_reset: True
     use_fixed_reset_state_ids: False
     max_episode_steps: 80
@@ -91,7 +98,7 @@ env:
     init_params:
       use_multiple_plates: False
   eval:
-    total_num_envs: 320         # 80 per GPU × 4
+    total_num_envs: 320         # 80 per GPU x 4
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 80
@@ -101,7 +108,7 @@ env:
     is_eval: True
     # Recording settings
     record_trajectories: true
-    record_output_dir: "./logs/openloop_data/default"
+    record_output_dir: "./logs/openloop_data/progress_rl_step30"
     record_env_count: 80
     video_cfg:
       save_video: False
@@ -117,7 +124,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_path: null  # set to the base model path, e.g. /path/to/RLinf-Pi05-ManiSkill-25Main-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -129,7 +136,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_path: null  # set to the base model path, e.g. /path/to/RLinf-Pi05-ManiSkill-25Main-SFT
     model_type: "openpi"
     add_value_head: True
     num_action_chunks: 5

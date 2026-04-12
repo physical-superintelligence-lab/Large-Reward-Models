@@ -26,7 +26,12 @@ from PIL import Image
 from tqdm import tqdm
 
 # Add RLinf root to path for VLMRewardClient
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# install.sh copies this file to <rlinf>/examples/embodiment/eval/
+# so we resolve: eval/ -> embodiment/ -> examples/ -> rlinf_root -> rlinf/envs/maniskill/
+_EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
+_EMBODIED_DIR = os.path.dirname(_EVAL_DIR)
+_RLINF_ROOT = os.path.dirname(os.path.dirname(_EMBODIED_DIR))
+sys.path.insert(0, os.path.join(_RLINF_ROOT, "rlinf", "envs", "maniskill"))
 from vlm_reward_client import VLMRewardClient
 
 
