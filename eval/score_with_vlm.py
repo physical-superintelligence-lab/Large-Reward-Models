@@ -113,7 +113,7 @@ def score_trajectory_completion(
             scores.append({"t": t, "vlm_completion_score": None, "response": "corrupted_frame"})
             continue
 
-        result = client.compute_reward(img, task_description, reward_type="progress")
+        result = client.compute_completion(img, task_description)
         scores.append({
             "t": t,
             "vlm_completion_score": result.get("score", 0.0),
