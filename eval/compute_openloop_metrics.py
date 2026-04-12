@@ -4,7 +4,7 @@ Compute open-loop VLM reward metrics.
 
 Auto-detects the scoring mode from vlm_scores.json and outputs mode-specific metrics:
   - progress / completion: ROC-AUC, Pairwise Acc (%), Global Pearson, Per-traj Pearson
-  - comparison (contrastive): Direction Acc (%), Progress Recall (%), Monotonicity (success)
+  - contrastive: Direction Acc (%), Progress Recall (%), Monotonicity (success)
 
 Usage:
     python compute_openloop_metrics.py \
