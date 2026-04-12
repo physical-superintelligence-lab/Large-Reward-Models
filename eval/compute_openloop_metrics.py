@@ -144,8 +144,7 @@ def compute_progress_completion_metrics(trajs_data: list) -> dict:
             if not np.isnan(r):
                 pearson_list.append(r)
         if pearson_list:
-            metrics["per_traj_pearson_mean"] = float(np.mean(pearson_list))
-            metrics["per_traj_pearson_std"] = float(np.std(pearson_list))
+            metrics["per_traj_pearson"] = float(np.mean(pearson_list))
 
     return metrics
 
