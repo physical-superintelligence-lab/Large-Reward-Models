@@ -50,7 +50,7 @@ class RecordingManiskillEnv(ManiskillEnv):
         worker_info,
         record_metrics: bool = True,
     ):
-        super().__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics=False)
+        super().__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics=True)
 
         self.record_trajectories: bool = getattr(cfg, "record_trajectories", True)
         record_output_dir: str = getattr(cfg, "record_output_dir", "./logs/openloop_data/default")
@@ -71,6 +71,9 @@ class RecordingManiskillEnv(ManiskillEnv):
         self._cumulative_rewards = [0.0] * self._record_num_envs
         self._ep_success_once = [False] * self._record_num_envs
         self._traj_counters = [0] * self._record_num_envs  # episode index per env
+
+    def _record_metrics(self, step_reward, infos):
+        return infos
 
     # ------------------------------------------------------------------
     # Internal helpers
