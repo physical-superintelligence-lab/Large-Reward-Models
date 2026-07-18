@@ -95,7 +95,7 @@ env:
     # Completion mode
     vlm_reward_type: completion
     vlm_completion_binary_reward: true
-    vlm_call_interval: 5
+    vlm_call_interval: 10
     vlm_pure_reward: true
     vlm_non_call_reward_mode: hold
     vlm_require_connection: true
