@@ -163,6 +163,7 @@ class VLMRewardClient:
         self,
         frames: list[np.ndarray],
         task_description: str,
+        fps: float = 1.0,
     ) -> dict:
         """
         Score a trajectory via RoboReward (1-5 discrete, normalized to 0-1).
@@ -170,6 +171,8 @@ class VLMRewardClient:
         Args:
             frames: RGB frame list, each shape=(H,W,3), dtype=uint8
             task_description: Task description
+            fps: wall-clock frame rate of `frames` (control_freq / vlm_call_interval
+                for the online training path).
 
         Returns:
             dict: {"score": float (0-1), "raw_score": int (1-5), "response": str, "success": bool}
@@ -188,6 +191,7 @@ class VLMRewardClient:
         request_data = {
             "frames": encoded_frames,
             "task_description": task_description,
+            "fps": fps,
         }
 
         try:

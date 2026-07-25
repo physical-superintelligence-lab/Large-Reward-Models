@@ -525,12 +525,17 @@ def extract_roboreward_score(response: str) -> tuple:
 def compute_vlm_roboreward(
     frames: list,
     task_description: str,
+    fps: float = 1.0,
 ) -> dict:
     """Score a trajectory via RoboReward-style video prompt (1-5 discrete, normalized to 0-1).
 
     Args:
         frames: PIL Image list (chronologically ordered)
         task_description: Task description
+        fps: wall-clock frame rate of `frames` (control_freq / vlm_call_interval
+            for the online training path). Metadata for Qwen's temporal position
+            encoding, not a resampling control. Default 1.0 is only correct if
+            the caller's frames are really 1s apart.
 
     Returns:
         dict: {"score": float (0-1), "raw_score": int (1-5), "response": str}
@@ -551,7 +556,7 @@ def compute_vlm_roboreward(
                 {
                     "type": "video",
                     "video": frames,
-                    "fps": 1.0,
+                    "fps": fps,
                 },
                 {"type": "text", "text": prompt},
             ],
@@ -1652,9 +1657,10 @@ def compute_roboreward_endpoint():
             frames.append(Image.fromarray(arr))
 
         task_description = data['task_description']
+        fps = float(data.get('fps', 1.0))
 
         with inference_lock:
-            result = compute_vlm_roboreward(frames, task_description)
+            result = compute_vlm_roboreward(frames, task_description, fps=fps)
 
         return jsonify({
             "success": True,
@@ -1706,10 +1712,10 @@ def main():
     parser.add_argument("--port", type=int, default=5001, help="Server port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
     parser.add_argument(
-        "--model_path", 
-        type=str, 
-        default="/data/yanruwu/vlm_reward/qwen-vl-finetune/checkpoints_estimate_cot60k_withoutna/checkpoint-469",
-        help="Path to VLM model or LoRA adapter"
+        "--model_path",
+        type=str,
+        default=None,
+        help="Path to VLM model or LoRA adapter (required unless using --tri_*_adapter)"
     )
     parser.add_argument(
         "--base_model_path",
@@ -1736,6 +1742,8 @@ def main():
     )
     if any(tri_paths) and not all(tri_paths):
         parser.error("tri-head mode requires all three --tri_*_adapter paths")
+    if not any(tri_paths) and args.model_path is None:
+        parser.error("--model_path is required unless using --tri_*_adapter")
     if all(tri_paths):
         load_vlm_multi_adapter(
             args.base_model_path,

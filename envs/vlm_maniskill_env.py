@@ -96,6 +96,18 @@ class VLMManiskillEnv(ManiskillEnv):
         self.vlm_reward_weight = cfg.get("vlm_reward_weight", 0.5)
         self.vlm_reward_scale = cfg.get("vlm_reward_scale", 5.0)
         self.vlm_call_interval = cfg.get("vlm_call_interval", 1)
+        # Wall-clock spacing between the frames a video-window mode (TOPReward,
+        # RoboReward) actually sees: one frame is buffered every
+        # vlm_call_interval sim steps, and each sim step is 1/control_freq
+        # seconds, so consecutive buffered frames are
+        # vlm_call_interval / control_freq seconds apart. Falls back to the
+        # sim's default control_freq if the config layout this is read from
+        # ever changes shape.
+        try:
+            control_freq = float(cfg.init_params.sim_config.control_freq)
+        except (AttributeError, KeyError, TypeError):
+            control_freq = 5.0
+        self.vlm_video_fps = control_freq / max(1, self.vlm_call_interval)
         self.vlm_use_comparison = bool(cfg.get("vlm_use_comparison", False))
         self.vlm_use_tri_reward = bool(cfg.get("vlm_use_tri_reward", False))
         self.vlm_use_roboreward = bool(cfg.get("vlm_use_roboreward", False))
@@ -431,7 +443,9 @@ class VLMManiskillEnv(ManiskillEnv):
             task = task_descs[env_idx] if env_idx < len(task_descs) else task_descs[0]
 
             try:
-                result = self._vlm_client.compute_topreward(frames, task)
+                result = self._vlm_client.compute_topreward(
+                    frames, task, fps=self.vlm_video_fps
+                )
                 score = result.get("score", None)
 
                 if score is not None:
@@ -531,7 +545,9 @@ class VLMManiskillEnv(ManiskillEnv):
             task = task_descs[env_idx] if env_idx < len(task_descs) else task_descs[0]
 
             try:
-                result = self._vlm_client.compute_roboreward(frames, task)
+                result = self._vlm_client.compute_roboreward(
+                    frames, task, fps=self.vlm_video_fps
+                )
                 score = result.get("score", None)
 
                 if score is not None:
