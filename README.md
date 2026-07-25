@@ -176,8 +176,8 @@ Host Machine                          Docker Container (RLinf)
 │  VLM Reward Server  │              │  vlm_maniskill_env.py    │
 │  (vlm_reward_server │◄── HTTP ───► │    └─ vlm_reward_client  │
 │   .py + VLM model)  │   :5002      │                          │
-│                     │              │  train_embodied_agent.py  │
-│  GPU: VLM inference │              │  GPU: Policy training     │
+│                     │              │  train_embodied_agent.py │
+│  GPU: VLM inference │              │  GPU: Policy training    │
 └─────────────────────┘              └──────────────────────────┘
 ```
 
