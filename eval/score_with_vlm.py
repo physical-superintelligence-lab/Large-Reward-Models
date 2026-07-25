@@ -119,7 +119,6 @@ def score_trajectory_completion(
             "vlm_completion_score": result.get("score", 0.0),
             "response": result.get("response", ""),
             "success": result.get("success", False),
-            "latency_ms": result.get("latency_ms", 0.0),
         })
 
     return scores
@@ -182,7 +181,6 @@ def score_trajectory_comparison(
             "vlm_comparison_score": result.get("score", 0.0),
             "result": result.get("result", "N/A"),
             "response": result.get("response", ""),
-            "latency_ms": result.get("latency_ms", 0.0),
         })
 
     return scores
@@ -225,221 +223,6 @@ def score_trajectory_progress(
             "vlm_completion_score": result.get("score", 0.0),
             "response": result.get("response", ""),
             "success": result.get("success", False),
-            "latency_ms": result.get("latency_ms", 0.0),
-        })
-
-    return scores
-
-
-def score_trajectory_gvl(
-    traj: dict,
-    client: VLMRewardClient,
-    task_description: str,
-    max_frames: int = 16,
-    shuffle: bool = True,
-    seed: int = 0,
-) -> list:
-    """Score a whole trajectory in one GVL call.
-
-    GVL is a trajectory-level in-context estimator: it sees all frames at once
-    (shuffled) and assigns each a completion percentage. That is its native
-    protocol, so open-loop scoring matches the original method exactly -- unlike
-    the online adaptation needed to use it as a per-step RL reward.
-    """
-    sorted_steps = sorted(traj["steps"], key=lambda s: s["t"])
-    timesteps = [s["t"] for s in sorted_steps]
-    if len(timesteps) < 2:
-        return []
-
-    # Uniform subsample: GVL sees every frame in one context, so the count drives
-    # both context length and generation length.
-    if len(timesteps) > max_frames:
-        keep = np.linspace(0, len(timesteps) - 1, max_frames, dtype=int)
-        timesteps = [timesteps[i] for i in keep]
-
-    imgs, kept_ts = [], []
-    for t in timesteps:
-        frame_path = traj["frame_paths"].get(t)
-        if frame_path is None:
-            continue
-        try:
-            imgs.append(np.array(Image.open(frame_path).convert("RGB")))
-            kept_ts.append(t)
-        except (OSError, Exception) as e:
-            print(f"  Warning: skipping corrupted frame t={t}: {e}")
-            continue
-
-    if len(imgs) < 2:
-        return []
-
-    result = client.compute_gvl(
-        imgs, task_description, shuffle=shuffle, seed=seed
-    )
-    ppf = result.get("progress_per_frame", [])
-
-    scores = []
-    for i, t in enumerate(kept_ts):
-        scores.append({
-            "t": t,
-            "vlm_gvl_score": ppf[i] if i < len(ppf) else None,
-            "parse_ok": result.get("parse_ok", False),
-            # One call covers the whole trajectory; attribute its latency once so
-            # the per-call mean is not diluted across frames.
-            "latency_ms": result.get("latency_ms", 0.0) if i == 0 else 0.0,
-        })
-    return scores
-
-
-def _load_frame(traj: dict, t: int):
-    """Load a single recorded frame as an RGB uint8 array, or None on failure."""
-    frame_path = traj["frame_paths"].get(t)
-    if frame_path is None:
-        return None
-    try:
-        return np.array(Image.open(frame_path).convert("RGB"))
-    except (OSError, Exception) as e:
-        print(f"  Warning: skipping corrupted frame t={t}: {e}")
-        return None
-
-
-def _score_trajectory_video_window(
-    traj: dict,
-    client: VLMRewardClient,
-    task_description: str,
-    call_fn,
-    call_interval: int = 10,
-    max_frames: int = 16,
-) -> list:
-    """Score frames with a growing, capped window of history -- the same buffering
-    RoboReward/Robometer use at training time (envs/vlm_maniskill_env.py:
-    _update_roboreward_buffers / _update_robometer_buffers): each trigger step
-    appends the current frame, and once the buffer exceeds max_frames it is
-    uniformly subsampled back down to max_frames. call_fn(frames_window,
-    task_description) -> client result dict.
-    """
-    scores = []
-    sorted_steps = sorted(traj["steps"], key=lambda s: s["t"])
-    timesteps = [s["t"] for s in sorted_steps]
-    if not timesteps:
-        return scores
-
-    window = []
-    for i, t in enumerate(timesteps):
-        is_last = (i == len(timesteps) - 1)
-        is_trigger = (call_interval <= 1) or (i % call_interval == 0) or is_last
-        if not is_trigger:
-            continue
-
-        frame = _load_frame(traj, t)
-        if frame is None:
-            scores.append({"t": t, "vlm_completion_score": None, "response": ""})
-            continue
-
-        window.append(frame)
-        if len(window) > max_frames:
-            keep = np.linspace(0, len(window) - 1, max_frames, dtype=int)
-            window = [window[k] for k in keep]
-
-        result = call_fn(window, task_description)
-        scores.append({
-            "t": t,
-            "vlm_completion_score": result.get("score", 0.0),
-            "raw_score": result.get("raw_score"),
-            "n_frames": len(window),
-            "response": result.get("response", ""),
-            "success": result.get("success", False),
-        })
-
-    return scores
-
-
-def score_trajectory_roboreward(
-    traj: dict,
-    client: VLMRewardClient,
-    task_description: str,
-    call_interval: int = 10,
-    max_frames: int = 16,
-) -> list:
-    """Score with RoboReward's growing video window (1-5 rubric, normalized 0-1)."""
-    return _score_trajectory_video_window(
-        traj, client, task_description, client.compute_roboreward,
-        call_interval=call_interval, max_frames=max_frames,
-    )
-
-
-def score_trajectory_robometer(
-    traj: dict,
-    client: VLMRewardClient,
-    task_description: str,
-    call_interval: int = 10,
-    max_frames: int = 16,
-) -> list:
-    """Score with Robometer's growing video window (continuous progress head)."""
-    return _score_trajectory_video_window(
-        traj, client, task_description, client.compute_robometer,
-        call_interval=call_interval, max_frames=max_frames,
-    )
-
-
-def score_trajectory_tri(
-    traj: dict,
-    client: VLMRewardClient,
-    task_description: str,
-    call_interval: int = 10,
-    tri_weights=(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),
-    contrastive_to_unit: bool = True,
-) -> list:
-    """Score with the tri-facet combination: weighted contrastive + progress +
-    completion, matching envs/vlm_maniskill_env.py:_compute_vlm_tri_rewards.
-    Contrastive compares the current trigger frame against the PREVIOUS trigger
-    frame (call_interval steps back), same as training, and by default is mapped
-    from [-1, 1] to [0, 1] before the weighted sum (vlm_tri_contrastive_to_unit).
-    """
-    w_cont, w_prog, w_comp = tri_weights
-    scores = []
-    sorted_steps = sorted(traj["steps"], key=lambda s: s["t"])
-    timesteps = [s["t"] for s in sorted_steps]
-    if not timesteps:
-        return scores
-
-    prev_frame = None
-    for i, t in enumerate(timesteps):
-        is_last = (i == len(timesteps) - 1)
-        is_trigger = (call_interval <= 1) or (i % call_interval == 0) or is_last
-        if not is_trigger:
-            continue
-
-        frame = _load_frame(traj, t)
-        if frame is None:
-            scores.append({"t": t, "vlm_completion_score": None, "response": ""})
-            continue
-
-        cont_score = 0.0
-        if prev_frame is not None:
-            r = client.compute_comparison(prev_frame, frame, task_description)
-            if r.get("success", False):
-                cont_score = float(r.get("score", 0.0))
-                if contrastive_to_unit:
-                    cont_score = (cont_score + 1.0) / 2.0
-        prev_frame = frame
-
-        prog_score = 0.0
-        r = client.compute_reward(frame, task_description, reward_type="progress")
-        if r.get("success", False):
-            prog_score = float(r.get("score", 0.0))
-
-        comp_score = 0.0
-        r = client.compute_completion(frame, task_description)
-        if r.get("success", False):
-            comp_score = float(r.get("score", 0.0))
-
-        combined = w_cont * cont_score + w_prog * prog_score + w_comp * comp_score
-        scores.append({
-            "t": t,
-            "vlm_completion_score": combined,
-            "contrastive": cont_score,
-            "progress": prog_score,
-            "completion": comp_score,
         })
 
     return scores
@@ -452,60 +235,27 @@ def score_single_trajectory(
     mode: str,
     comparison_interval: int = 1,
     call_interval: int = 1,
-    gvl_max_frames: int = 16,
-    gvl_shuffle: bool = True,
-    video_max_frames: int = 16,
-    tri_weights=(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),
 ) -> dict:
     """Score a single trajectory with completion and/or comparison."""
-    # PutOnPlateInScene25Main samples a different object per episode. Recordings
-    # from a fixed RecordingManiskillEnv carry the actual per-episode instruction
-    # in summary.json; older recordings without that field fall back to the CLI
-    # --task_description so they still score (with the caveat that predates this
-    # fix: a single description applied to trajectories about different objects).
-    resolved_task_description = traj["summary"].get("task_description") or task_description
-
     result = {
         "traj_dir": traj["traj_dir"],
         "summary": traj["summary"],
         "oracle_steps": traj["steps"],
-        "task_description": resolved_task_description,
     }
 
     if mode in ("completion", "both"):
         result["completion_scores"] = score_trajectory_completion(
-            traj, client, resolved_task_description
+            traj, client, task_description
         )
 
     if mode in ("comparison", "both"):
         result["comparison_scores"] = score_trajectory_comparison(
-            traj, client, resolved_task_description, comparison_interval
+            traj, client, task_description, comparison_interval
         )
 
     if mode == "progress":
         result["completion_scores"] = score_trajectory_progress(
-            traj, client, resolved_task_description, call_interval
-        )
-
-    if mode == "gvl":
-        result["gvl_scores"] = score_trajectory_gvl(
-            traj, client, resolved_task_description,
-            max_frames=gvl_max_frames, shuffle=gvl_shuffle,
-        )
-
-    if mode == "roboreward":
-        result["completion_scores"] = score_trajectory_roboreward(
-            traj, client, resolved_task_description, call_interval, video_max_frames
-        )
-
-    if mode == "robometer":
-        result["completion_scores"] = score_trajectory_robometer(
-            traj, client, resolved_task_description, call_interval, video_max_frames
-        )
-
-    if mode == "tri":
-        result["completion_scores"] = score_trajectory_tri(
-            traj, client, resolved_task_description, call_interval, tri_weights
+            traj, client, task_description, call_interval
         )
 
     return result
@@ -520,14 +270,11 @@ def main():
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON path (default: <data_dir>/vlm_scores.json)")
     parser.add_argument("--mode", type=str, default="completion",
-                        choices=["completion", "comparison", "both", "progress", "gvl",
-                                 "roboreward", "robometer", "tri"],
+                        choices=["completion", "comparison", "both", "progress"],
                         help="Scoring mode")
     parser.add_argument("--task_description", type=str,
                         default="Pick up the object and place it on the plate",
-                        help="Fallback task description, used only for recordings made "
-                             "before RecordingManiskillEnv started saving the real "
-                             "per-episode instruction in summary.json")
+                        help="Task description for VLM")
     parser.add_argument("--max_workers", type=int, default=1,
                         help="Number of parallel workers (1 = sequential)")
     parser.add_argument("--max_trajs", type=int, default=0,
@@ -535,25 +282,7 @@ def main():
     parser.add_argument("--comparison_interval", type=int, default=1,
                         help="Frame interval for comparison mode (default: 1, score every step)")
     parser.add_argument("--call_interval", type=int, default=1,
-                        help="Frame interval for progress/roboreward/robometer/tri mode: "
-                             "score every N steps (default: 1; use 10 to match training's "
-                             "default vlm_call_interval)")
-    parser.add_argument("--gvl_max_frames", type=int, default=16,
-                        help="GVL mode: frames per trajectory, uniformly subsampled (default: 16)")
-    parser.add_argument("--gvl_no_shuffle", action="store_true",
-                        help=("GVL mode: disable frame shuffling. For diagnosis ONLY -- "
-                              "an unshuffled VLM emits a monotonic ramp that scores well "
-                              "on order metrics without looking at the images. Never use "
-                              "for a reported GVL number."))
-    parser.add_argument("--video_max_frames", type=int, default=16,
-                        help="roboreward/robometer mode: cap on the growing history "
-                             "window, matching vlm_roboreward_max_frames/"
-                             "vlm_robometer_max_frames at training time (default: 16)")
-    parser.add_argument("--tri_weights", type=float, nargs=3,
-                        default=(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),
-                        metavar=("CONTRASTIVE", "PROGRESS", "COMPLETION"),
-                        help="tri mode: weights for the three heads (default: equal thirds, "
-                             "matching config/tri.yaml)")
+                        help="Frame interval for progress mode: score every N steps (default: 1)")
     args = parser.parse_args()
 
     # Default output path
@@ -583,16 +312,10 @@ def main():
     total_frames = sum(len(t["steps"]) for t in trajectories)
     if args.mode == "comparison":
         total_vlm_calls = sum(max(1, len(t["steps"]) // args.comparison_interval) for t in trajectories)
-    elif args.mode in ("progress", "roboreward", "robometer"):
+    elif args.mode == "progress":
         total_vlm_calls = sum(max(1, len(t["steps"]) // args.call_interval) for t in trajectories)
-    elif args.mode == "tri":
-        # Every trigger step makes 3 calls (contrastive + progress + completion).
-        total_vlm_calls = 3 * sum(max(1, len(t["steps"]) // args.call_interval) for t in trajectories)
     elif args.mode == "completion":
         total_vlm_calls = total_frames
-    elif args.mode == "gvl":
-        # One call per trajectory: GVL scores every frame in a single context.
-        total_vlm_calls = len(trajectories)
     else:
         total_vlm_calls = total_frames + sum(max(0, len(t["steps"]) // args.comparison_interval) for t in trajectories)
     print(f"\nScoring {len(trajectories)} trajectories ({total_frames} total frames)")
@@ -605,12 +328,7 @@ def main():
     if args.max_workers <= 1:
         # Sequential scoring
         for i, traj in enumerate(tqdm(trajectories, desc="Scoring trajectories")):
-            result = score_single_trajectory(
-                traj, client, args.task_description, args.mode,
-                args.comparison_interval, args.call_interval,
-                args.gvl_max_frames, not args.gvl_no_shuffle,
-                args.video_max_frames, args.tri_weights,
-            )
+            result = score_single_trajectory(traj, client, args.task_description, args.mode, args.comparison_interval, args.call_interval)
             all_results.append(result)
 
             # Save intermediate results every 10 trajectories
@@ -621,10 +339,7 @@ def main():
         with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             futures = {
                 executor.submit(
-                    score_single_trajectory, traj, client, args.task_description,
-                    args.mode, args.comparison_interval, args.call_interval,
-                    args.gvl_max_frames, not args.gvl_no_shuffle,
-                    args.video_max_frames, args.tri_weights,
+                    score_single_trajectory, traj, client, args.task_description, args.mode, args.comparison_interval, args.call_interval
                 ): i
                 for i, traj in enumerate(trajectories)
             }
