@@ -19,11 +19,26 @@ use_vlm_reward: true
 vlm_server_url: "http://localhost:5002"
 
 # --- Mode selection (set exactly one to true) ---
+vlm_use_combo: false            # tri-faceted mode (cont + prog + comp jointly)
 vlm_use_comparison: false       # contrastive mode
 vlm_use_roboreward: false       # roboreward mode (1-5 video scoring)
 vlm_use_robometer: false        # robometer mode (per-frame progress heads)
-# If all three are false, uses vlm_reward_type below:
+# If all four are false, uses vlm_reward_type below:
 vlm_reward_type: progress       # completion | progress | quality
+
+# --- Tri-faceted (combo) mode parameters ---
+# r = w_cont * r_cont + w_prog * r_prog + w_comp * r_comp
+#   r_cont in {-1, 0, +1}, r_prog in [0, 1], r_comp in {0, 1}
+# Equal thirds by default so the combined magnitude matches the single-modality
+# runs and the PPO hyperparameters transfer unchanged. Override from the CLI to
+# sweep, e.g. env.train.vlm_combo_w_cont=0.5
+vlm_combo_w_cont: 0.3333
+vlm_combo_w_prog: 0.3333
+vlm_combo_w_comp: 0.3333
+# Adapter names as registered on the server: --adapters cont=...,prog=...,comp=...
+vlm_combo_adapter_cont: cont
+vlm_combo_adapter_prog: prog
+vlm_combo_adapter_comp: comp
 
 # --- Common parameters ---
 vlm_reward_scale: 1.0

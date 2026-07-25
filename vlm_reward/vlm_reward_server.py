@@ -42,6 +42,14 @@ robometer_prog_token_id = None
 robometer_vision_start_token_id = None
 robometer_vision_end_token_id = None
 inference_lock = threading.Lock()
+vlm_adapter_names = {}
+
+
+def _activate_adapter(reward_head: str) -> None:
+    """Select a LoRA adapter when the server was started in tri-head mode."""
+    adapter_name = vlm_adapter_names.get(reward_head)
+    if adapter_name is not None:
+        vlm_model.set_adapter(adapter_name)
 
 
 class RobometerProgressHead(torch.nn.Module):
@@ -148,7 +156,12 @@ def _load_robometer_runtime_config(model_path: str) -> None:
         robometer_use_per_frame_progress_token = False
 
 
-def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Instruct", gpu_id: int = 0):
+def load_vlm_model(
+    model_path: str,
+    base_model_path: str = "Qwen/Qwen3-VL-8B-Instruct",
+    gpu_id: int = 0,
+    processor_path_override: str = None,
+):
     """Load VLM reward model (supports LoRA adapter via manual merge)."""
     global vlm_model, vlm_processor, device
     global robometer_progress_head, robometer_frame_pool_attn, robometer_head_mode
@@ -237,7 +250,11 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
     
     vlm_model.eval()
     
-    processor_path = model_path if not is_lora else base_model_path
+    processor_path = (
+        processor_path_override
+        if processor_path_override
+        else (model_path if not is_lora else base_model_path)
+    )
     try:
         vlm_processor = AutoProcessor.from_pretrained(
             processor_path, trust_remote_code=True
@@ -282,6 +299,84 @@ def load_vlm_model(model_path: str, base_model_path: str = "Qwen/Qwen3-VL-8B-Ins
     return vlm_model, vlm_processor
 
 
+def load_vlm_multi_adapter(
+    base_model_path: str,
+    contrastive_adapter_path: str,
+    progress_adapter_path: str,
+    completion_adapter_path: str,
+    gpu_id: int = 0,
+):
+    """Load one Qwen base and three switchable LoRA adapters for tri-head inference."""
+    global vlm_model, vlm_processor, device, vlm_adapter_names
+
+    from peft import PeftConfig, PeftModel
+    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
+    device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
+    print(f"Loading tri-head base model from {base_model_path} on {device}...")
+    # Load on CPU and move to the GPU only after every adapter is attached.
+    # Passing device_map here makes PEFT silently skip loading the LoRA weights:
+    # from_pretrained returns with lora_B still at its zero init, no warning and
+    # no unexpected_keys. Since LoRA is B @ A, a zeroed B is an exact identity,
+    # so all three heads would serve the unmodified base model while /health
+    # cheerfully reports the adapters as loaded.
+    base_model = Qwen3VLForConditionalGeneration.from_pretrained(
+        base_model_path,
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+    )
+    adapter_paths = {
+        "contrastive": contrastive_adapter_path,
+        "progress": progress_adapter_path,
+        "completion": completion_adapter_path,
+    }
+    # Progress contains modules_to_save entries for the visual tower/merger.
+    # It must be the first adapter so PEFT constructs those wrappers before
+    # adding the two language-only adapters.
+    first_name = "progress"
+    progress_config = PeftConfig.from_pretrained(adapter_paths[first_name])
+    # The published progress adapter lists both `visual` and its nested
+    # `merger` module. PEFT 0.18 cannot construct overlapping
+    # ModulesToSaveWrapper objects, while wrapping `visual` already includes
+    # every merger weight in the checkpoint.
+    progress_config.modules_to_save = ["visual"]
+    vlm_model = PeftModel.from_pretrained(
+        base_model,
+        adapter_paths[first_name],
+        adapter_name=first_name,
+        is_trainable=False,
+        config=progress_config,
+    )
+    for name in ("contrastive", "completion"):
+        print(f"Loading tri-head {name} adapter from {adapter_paths[name]}...")
+        vlm_model.load_adapter(adapter_paths[name], adapter_name=name, is_trainable=False)
+    vlm_model = vlm_model.to(device)
+    vlm_model.eval()
+
+    # Fail loudly rather than silently serving the base model: a zeroed lora_B
+    # is indistinguishable from the base at inference time.
+    for name in adapter_paths:
+        vlm_model.set_adapter(name)
+        if not any(
+            param.abs().any().item()
+            for key, param in vlm_model.named_parameters()
+            if f"lora_B.{name}.weight" in key
+        ):
+            raise RuntimeError(
+                f"Adapter '{name}' loaded with an all-zero lora_B: its weights were "
+                f"not applied, so this head would silently serve the base model."
+            )
+    # Adapter exports include the processor files even when a local cached base
+    # snapshot contains only model/tokenizer shards.
+    vlm_processor = AutoProcessor.from_pretrained(
+        progress_adapter_path, trust_remote_code=True
+    )
+    vlm_adapter_names = {name: name for name in adapter_paths}
+    _activate_adapter(first_name)
+    print(f"Tri-head VLM loaded with adapters: {sorted(vlm_adapter_names)}")
+    return vlm_model, vlm_processor
+
+
 # Robometer-style video prompt adapted to single-rollout RL training.
 ROBOMETER_VIDEO_PROMPT = (
     'Given this trajectory for the task "{task}", '
@@ -291,6 +386,113 @@ ROBOMETER_VIDEO_PROMPT = (
     "Output strict JSON in the following format:\n"
     '{{"progress_per_frame":[p1,p2,...],"final_progress":p_last}}'
 )
+
+
+# TOPReward (github.com/TOPReward/TOPReward). Reproduced verbatim from
+# topreward/clients/qwen.py:compute_instruction_reward with the repository's
+# default options (use_video_description=false, add_chat_template=false,
+# reduction=mean, fps=2.0). Despite the paper's phrasing, the implementation
+# scores a single token: everything but the final "True" is masked out, so the
+# reward is log P("True" | video, task) -- how confident the VLM is that the
+# trajectory completes the instruction.
+TOPREWARD_PREFIX = (
+    "The above video shows a robot manipulation trajectory that completes the "
+    "following task: "
+)
+TOPREWARD_SUFFIX = (
+    " Decide whether the above statement is True or not. The answer is: True"
+)
+
+
+# Affine map from log P("True") to [0, 1]. TOPReward's own normalisation is
+# min-max across a trajectory's prefixes, which is retrospective and unavailable
+# online, and exp() is useless here: measured log-probabilities run about -26 to
+# -7, so exp() collapses every score to ~0. A fixed monotone rescale keeps the
+# ordering the method actually provides (its reported metric, VOC, is a rank
+# correlation) while putting the reward on the same [0, 1] scale as every other
+# arm. Bounds are round numbers bracketing the observed range over SFT
+# trajectories (min -26.1, p5 -25.1, p95 -7.7, max -6.8).
+TOPREWARD_LOGP_LO = -25.0
+TOPREWARD_LOGP_HI = -5.0
+
+
+def compute_vlm_topreward(
+    frames: list,
+    task_description: str,
+    fps: float = 2.0,
+) -> dict:
+    """Score a frame sequence with TOPReward: log P("True" | video, instruction).
+
+    Returns the raw log-probability plus a monotone rescaling of it into [0, 1]
+    (see TOPREWARD_LOGP_LO/HI) for use as an RL reward.
+    """
+    from qwen_vl_utils import process_vision_info
+
+    global vlm_model, vlm_processor, device
+
+    if vlm_model is None:
+        raise RuntimeError("VLM model not loaded!")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "video", "video": frames, "fps": fps},
+                {"type": "text", "text": TOPREWARD_PREFIX},
+            ],
+        }
+    ]
+
+    prompt_chat = vlm_processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=False
+    )
+    eos_token = getattr(vlm_processor.tokenizer, "eos_token", None)
+    if eos_token is not None:
+        prompt_chat = prompt_chat.split(eos_token)[0]
+    full_text = f"{prompt_chat}{task_description}{TOPREWARD_SUFFIX}"
+
+    image_inputs, video_inputs, video_kwargs = process_vision_info(
+        messages, return_video_kwargs=True
+    )
+    inputs = vlm_processor(
+        text=[full_text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+        **video_kwargs,
+    ).to(device)
+
+    # Mask everything but the last token, so only "True" is scored.
+    labels = inputs["input_ids"].clone()
+    prompt_length = inputs["input_ids"].shape[1] - 1
+    labels[:, :prompt_length] = -100
+    if "attention_mask" in inputs:
+        labels = labels.masked_fill(inputs["attention_mask"] == 0, -100)
+
+    with torch.no_grad():
+        outputs = vlm_model(**inputs)
+
+    logits = outputs.logits[:, :-1, :]
+    target_labels = labels[:, 1:]
+    log_probs = F.log_softmax(logits.float(), dim=-1)
+    mask = target_labels != -100
+    safe_targets = target_labels.masked_fill(~mask, 0)
+    token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
+    masked_log_probs = token_log_probs[mask]
+
+    if masked_log_probs.numel() == 0:
+        return {"score": 0.0, "log_prob": None, "token_count": 0, "response": ""}
+
+    log_prob = masked_log_probs.mean().item()
+    score = (log_prob - TOPREWARD_LOGP_LO) / (TOPREWARD_LOGP_HI - TOPREWARD_LOGP_LO)
+    score = float(min(1.0, max(0.0, score)))
+    return {
+        "score": score,
+        "log_prob": log_prob,
+        "token_count": int(masked_log_probs.numel()),
+        "response": f"logP(True)={log_prob:.4f}",
+    }
 
 
 ROBOREWARD_PROMPT = (
@@ -441,6 +643,7 @@ def compute_vlm_comparison(
 
     if vlm_model is None:
         raise RuntimeError("VLM model not loaded!")
+    _activate_adapter("contrastive")
 
     def to_pil(img):
         if isinstance(img, np.ndarray):
@@ -934,6 +1137,8 @@ def compute_vlm_reward(
     
     if vlm_model is None:
         raise RuntimeError("VLM model not loaded!")
+    if reward_type == "progress":
+        _activate_adapter("progress")
     
     def to_pil(img):
         """Convert numpy array to PIL Image"""
@@ -1088,7 +1293,8 @@ def health_check():
     """Health check endpoint."""
     return jsonify({
         "status": "healthy",
-        "model_loaded": vlm_model is not None
+        "model_loaded": vlm_model is not None,
+        "adapters": sorted(vlm_adapter_names),
     })
 
 
@@ -1142,11 +1348,12 @@ def compute_reward_endpoint():
                 initial_dtype = data.get('initial_image_dtype', default_dtype)
                 initial_image = decode_image(data['initial_image'], initial_shape, initial_dtype)
         
-        result = compute_vlm_reward(
-            image, task_description, reward_type,
-            goal_image=goal_image,
-            initial_image=initial_image
-        )
+        with inference_lock:
+            result = compute_vlm_reward(
+                image, task_description, reward_type,
+                goal_image=goal_image,
+                initial_image=initial_image
+            )
         
         return jsonify({
             "success": True,
@@ -1245,30 +1452,25 @@ def compute_vlm_completion(
 
     if vlm_model is None:
         raise RuntimeError("VLM model not loaded!")
+    _activate_adapter("completion")
 
     # Convert to PIL
     if image.dtype != np.uint8:
         image = (image * 255).astype(np.uint8)
     current_pil = Image.fromarray(image)
 
-    # Build prompt with reasoning requirement
+    # Matches the published model-card prompt (no reasoning field). A
+    # reasoning-first variant was A/B tested against this one on real
+    # trajectories and changed neither the yes/no decision nor accuracy, so
+    # this is the version that stays aligned with how the adapter was trained.
     prompt_text = (
         f"Task: Whether the task has been completed.\n\n"
         f"The task is: {task_description}\n\n"
         f"You are given:\n"
         f"- Current observation: <image>\n\n"
-        f'Question: Has the task been fully completed in the current observation?\n\n'
-        f'Important: Focus on whether the object has been placed on the target location. '
-        f'The gripper position does NOT matter - it can be near, on, or away from the object. '
-        f'Only check if the object is resting on the target surface.\n\n'
-        f'Please analyze the image carefully and explain your reasoning.\n'
-        f'Select one value from the following list:\n'
-        f'["yes", "no"]\n\n'
+        f"Has the task been completed?\n"
         f'Output your answer in the following JSON format:\n'
-        f'{{\n'
-        f'  "reasoning": "explain what you see and why you think the task is or is not completed",\n'
-        f'  "task_completed": "selected_value"\n'
-        f'}}'
+        f'{{ "task_completed": "yes" or "no" }}'
     )
 
     # Build message with image inline (matching test code format)
@@ -1302,7 +1504,7 @@ def compute_vlm_completion(
     with torch.no_grad():
         out = vlm_model.generate(
             **tensor_inputs,
-            max_new_tokens=256,  # Increased to allow for reasoning
+            max_new_tokens=128,
             do_sample=False,
             temperature=None,
             top_p=None,
@@ -1382,7 +1584,8 @@ def compute_completion_endpoint():
 
         task_description = data['task_description']
 
-        result = compute_vlm_completion(image, task_description)
+        with inference_lock:
+            result = compute_vlm_completion(image, task_description)
 
         return jsonify({
             "success": True,
@@ -1465,6 +1668,39 @@ def compute_roboreward_endpoint():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/compute_topreward', methods=['POST'])
+def compute_topreward_endpoint():
+    """Score a frame sequence via TOPReward: log P("True" | video, instruction)."""
+    try:
+        data = request.json
+
+        frames = []
+        for frame_data in data['frames']:
+            image_bytes = base64.b64decode(frame_data['data'])
+            shape = tuple(frame_data['shape'])
+            dtype = frame_data.get('dtype', 'uint8')
+            arr = np.frombuffer(image_bytes, dtype=dtype).reshape(shape)
+            frames.append(Image.fromarray(arr))
+
+        task_description = data['task_description']
+        fps = float(data.get('fps', 2.0))
+
+        with inference_lock:
+            result = compute_vlm_topreward(frames, task_description, fps=fps)
+
+        return jsonify({
+            "success": True,
+            "score": result["score"],
+            "log_prob": result["log_prob"],
+            "token_count": result["token_count"],
+            "response": result["response"],
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 def main():
     parser = argparse.ArgumentParser(description="VLM Reward Server")
     parser.add_argument("--port", type=int, default=5001, help="Server port")
@@ -1482,9 +1718,39 @@ def main():
         help="Path to base model (for LoRA adapter)"
     )
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use")
+    parser.add_argument(
+        "--processor_path",
+        type=str,
+        default=None,
+        help="Optional local processor/tokenizer export (useful with weights-only base caches)",
+    )
+    parser.add_argument("--tri_contrastive_adapter", type=str, default=None)
+    parser.add_argument("--tri_progress_adapter", type=str, default=None)
+    parser.add_argument("--tri_completion_adapter", type=str, default=None)
     args = parser.parse_args()
-    
-    load_vlm_model(args.model_path, args.base_model_path, args.gpu_id)
+
+    tri_paths = (
+        args.tri_contrastive_adapter,
+        args.tri_progress_adapter,
+        args.tri_completion_adapter,
+    )
+    if any(tri_paths) and not all(tri_paths):
+        parser.error("tri-head mode requires all three --tri_*_adapter paths")
+    if all(tri_paths):
+        load_vlm_multi_adapter(
+            args.base_model_path,
+            args.tri_contrastive_adapter,
+            args.tri_progress_adapter,
+            args.tri_completion_adapter,
+            args.gpu_id,
+        )
+    else:
+        load_vlm_model(
+            args.model_path,
+            args.base_model_path,
+            args.gpu_id,
+            processor_path_override=args.processor_path,
+        )
 
     print(f"Starting VLM Reward Server on {args.host}:{args.port}")
     app.run(host=args.host, port=args.port, threaded=False)

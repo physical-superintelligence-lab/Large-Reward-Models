@@ -16,7 +16,8 @@
 VLM-Enhanced ManiSkill Environment.
 
 Extends ManiskillEnv with VLM-based reward via HTTP server.
-Supports 5 VLM reward modes: contrastive, completion, progress, roboreward, robometer.
+Supports 7 VLM reward modes: contrastive, completion, progress, tri, roboreward,
+robometer, topreward.
 Blends with env reward or runs in pure VLM reward mode.
 
 Config keys (in env YAML):
@@ -26,8 +27,14 @@ Config keys (in env YAML):
     vlm_reward_weight: 1.0       # blend: (1-w)*env + w*vlm
     vlm_reward_type: completion  # completion | progress | quality (for single-frame modes)
     vlm_use_comparison: false    # contrastive mode (compares consecutive frames)
+    vlm_use_tri_reward: false    # equal/fixed-weight combination of three LRM heads
+    vlm_tri_contrastive_url: "http://localhost:5002"
+    vlm_tri_progress_url: "http://localhost:5002"
+    vlm_tri_completion_url: "http://localhost:5002"
+    vlm_tri_weights: [0.333333, 0.333333, 0.333333]
     vlm_use_roboreward: false    # roboreward mode (1-5 video scoring)
     vlm_use_robometer: false     # robometer mode (per-frame progress heads)
+    vlm_use_topreward: false     # topreward mode (log P("True" | video, task))
     vlm_completion_binary_reward: false  # if true, completion reward is exactly 0/1
     vlm_success_threshold: 0.5
     vlm_include_initial_image: false
@@ -90,13 +97,20 @@ class VLMManiskillEnv(ManiskillEnv):
         self.vlm_reward_scale = cfg.get("vlm_reward_scale", 5.0)
         self.vlm_call_interval = cfg.get("vlm_call_interval", 1)
         self.vlm_use_comparison = bool(cfg.get("vlm_use_comparison", False))
+        self.vlm_use_tri_reward = bool(cfg.get("vlm_use_tri_reward", False))
         self.vlm_use_roboreward = bool(cfg.get("vlm_use_roboreward", False))
         self.vlm_use_robometer = bool(cfg.get("vlm_use_robometer", False))
+        self.vlm_use_topreward = bool(cfg.get("vlm_use_topreward", False))
         self.vlm_roboreward_max_frames = max(
             1, int(cfg.get("vlm_roboreward_max_frames", 16))
         )
         self.vlm_robometer_max_frames = max(
             1, int(cfg.get("vlm_robometer_max_frames", 16))
+        )
+        # TOPReward scores 15 uniformly spaced frames per trajectory by default
+        # (configs/predict_topreward.yaml: dataset.num_frames).
+        self.vlm_topreward_max_frames = max(
+            1, int(cfg.get("vlm_topreward_max_frames", 15))
         )
         self.vlm_sample_envs = int(cfg.get("vlm_sample_envs", 0))
         self.vlm_calls_per_episode = int(cfg.get("vlm_calls_per_episode", 0))
@@ -120,6 +134,25 @@ class VLMManiskillEnv(ManiskillEnv):
             cfg.get("vlm_require_connection", self.vlm_pure_reward)
         )
         self.vlm_server_url = cfg.get("vlm_server_url", "http://localhost:5002")
+        self.vlm_tri_server_urls = {
+            "contrastive": cfg.get("vlm_tri_contrastive_url", self.vlm_server_url),
+            "progress": cfg.get("vlm_tri_progress_url", self.vlm_server_url),
+            "completion": cfg.get("vlm_tri_completion_url", self.vlm_server_url),
+        }
+        tri_weights = list(cfg.get("vlm_tri_weights", [1.0 / 3.0] * 3))
+        if len(tri_weights) != 3:
+            raise ValueError("vlm_tri_weights must contain [contrastive, progress, completion]")
+        self.vlm_tri_weights = tuple(float(weight) for weight in tri_weights)
+        if not np.isclose(sum(self.vlm_tri_weights), 1.0, atol=1e-6):
+            raise ValueError("vlm_tri_weights must sum to 1.0")
+        # Contrastive returns a signed [-1, 1] relative score, while progress and
+        # completion are non-negative [0, 1] absolute scores. Summed with equal
+        # weight, the contrastive negative half-axis cancels genuine progress. Map
+        # it to [0, 1] via (x + 1) / 2 so all three components share one scale
+        # before the weighted sum. Set false to recover the raw signed-sum tri.
+        self.vlm_tri_contrastive_to_unit = bool(
+            cfg.get("vlm_tri_contrastive_to_unit", True)
+        )
         # Fallback task description for envs without get_language_instruction()
         self.vlm_task_description = cfg.get(
             "vlm_task_description", "Pick up the cube"
@@ -139,16 +172,22 @@ class VLMManiskillEnv(ManiskillEnv):
 
         # Internal state
         self._vlm_client: Optional[VLMRewardClient] = None
+        self._vlm_tri_clients: dict[str, VLMRewardClient] = {}
         self._vlm_connected = False
         self._vlm_step_counter = 0
         self._vlm_initial_images = [None] * self.num_envs
         self._vlm_prev_images: dict[int, np.ndarray] = {}  # for contrastive mode
         self._vlm_frame_buffers = {}  # for robometer video mode
         self._vlm_roboreward_frame_buffers: dict[int, list] = {}  # for roboreward video mode
+        self._vlm_topreward_frame_buffers: dict[int, list] = {}  # for topreward video mode
         self._vlm_active_steps = set()
         self._vlm_last_rewards = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device
         )
+        self._vlm_last_components = {
+            name: torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+            for name in ("contrastive", "progress", "completion")
+        }
 
         # VLM logging
         self.vlm_log_file = cfg.get(
@@ -188,7 +227,30 @@ class VLMManiskillEnv(ManiskillEnv):
             os.makedirs(self._vlm_image_dir, exist_ok=True)
 
         if self.use_vlm_reward and VLM_CLIENT_AVAILABLE:
-            self._init_vlm_client()
+            if self.vlm_use_tri_reward:
+                self._init_vlm_tri_clients()
+            else:
+                self._init_vlm_client()
+
+    def _init_vlm_tri_clients(self):
+        """Initialize the three logical clients used by the tri-faceted reward."""
+        connected = True
+        for name, server_url in self.vlm_tri_server_urls.items():
+            print(f"[VLM] Connecting tri/{name} client to {server_url}")
+            client = VLMRewardClient(server_url=server_url, timeout=60.0)
+            self._vlm_tri_clients[name] = client
+            try:
+                head_connected = client.health_check()
+            except Exception as exc:
+                print(f"[VLM] WARNING: tri/{name} health check failed: {exc}")
+                head_connected = False
+            connected = connected and head_connected
+        self._vlm_connected = connected
+        if not connected and self.vlm_require_connection:
+            raise RuntimeError(
+                "One or more tri-faceted reward endpoints are unavailable; "
+                f"configured endpoints={self.vlm_tri_server_urls}"
+            )
 
     def _init_vlm_client(self):
         """Initialize HTTP client to VLM reward server."""
@@ -330,6 +392,70 @@ class VLMManiskillEnv(ManiskillEnv):
                 )
                 self._vlm_roboreward_frame_buffers[env_idx] = [buf[i] for i in keep]
 
+    def _update_topreward_buffers(self, rgb_list: list) -> None:
+        """Append current trigger-point frame to each env buffer for topreward video mode."""
+        total = min(self.num_envs, len(rgb_list))
+        for env_idx in range(total):
+            rgb = rgb_list[env_idx]
+            if rgb is None or rgb.size == 0:
+                continue
+            if env_idx not in self._vlm_topreward_frame_buffers:
+                self._vlm_topreward_frame_buffers[env_idx] = []
+            self._vlm_topreward_frame_buffers[env_idx].append(rgb.copy())
+            buf = self._vlm_topreward_frame_buffers[env_idx]
+            if len(buf) > self.vlm_topreward_max_frames:
+                keep = np.linspace(
+                    0, len(buf) - 1, self.vlm_topreward_max_frames, dtype=int
+                )
+                self._vlm_topreward_frame_buffers[env_idx] = [buf[i] for i in keep]
+
+    def _compute_vlm_topreward_rewards(
+        self,
+        rgb_list: list,
+        task_descs: list,
+        vlm_rewards: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute VLM rewards with TOPReward: exp(log P("True" | video, task)) in [0, 1]."""
+        total = min(self.num_envs, len(rgb_list))
+        selected = self._select_env_indices(total)
+
+        # Keep previous values for envs not sampled this round.
+        if self.vlm_sample_envs > 0 and self.vlm_sample_envs < total:
+            vlm_rewards[:] = self._vlm_last_rewards
+
+        for env_idx in selected:
+            frames = self._vlm_topreward_frame_buffers.get(env_idx, [])
+            if not frames:
+                continue
+
+            task = task_descs[env_idx] if env_idx < len(task_descs) else task_descs[0]
+
+            try:
+                result = self._vlm_client.compute_topreward(frames, task)
+                score = result.get("score", None)
+
+                if score is not None:
+                    vlm_rewards[env_idx] = float(score) * self.vlm_reward_scale
+
+                    if self._vlm_log_enabled:
+                        try:
+                            timestamp = datetime.now().strftime("%H:%M:%S")
+                            log_line = (
+                                f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},"
+                                f"topreward,{task},n_frames={len(frames)},"
+                                f"log_prob={result.get('log_prob')},score={score:.4f},"
+                                f"reward={vlm_rewards[env_idx]:.4f}\n"
+                            )
+                            with open(self.vlm_log_file, "a") as f:
+                                f.write(log_line)
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                print(f"[VLM] Warning: topreward failed for env {env_idx}: {e}")
+
+        return vlm_rewards
+
     def _compute_vlm_comparison_rewards(
         self,
         rgb_list: list,
@@ -371,8 +497,7 @@ class VLMManiskillEnv(ManiskillEnv):
                         log_line = (
                             f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},"
                             f"comparison,{task},result={result.get('result', 'N/A')},"
-                            f"score={score:.1f},reward={vlm_rewards[env_idx]:.4f},"
-                            f"{result.get('response', '')[:120]}\n"
+                            f"score={score:.1f},reward={vlm_rewards[env_idx]:.4f}\n"
                         )
                         with open(self.vlm_log_file, "a") as f:
                             f.write(log_line)
@@ -419,8 +544,7 @@ class VLMManiskillEnv(ManiskillEnv):
                                 f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},"
                                 f"roboreward,{task},n_frames={len(frames)},"
                                 f"raw_score={result.get('raw_score')},normalized={score:.4f},"
-                                f"reward={vlm_rewards[env_idx]:.4f},"
-                                f"{result.get('response', '')[:120]}\n"
+                                f"reward={vlm_rewards[env_idx]:.4f}\n"
                             )
                             with open(self.vlm_log_file, "a") as f:
                                 f.write(log_line)
@@ -482,12 +606,10 @@ class VLMManiskillEnv(ManiskillEnv):
 
                 if self._vlm_log_enabled:
                     timestamp = datetime.now().strftime("%H:%M:%S")
-                    response = result.get("response", "")
                     raw_score = result.get("raw_score", None)
                     log_line = (
                         f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},robometer_video,"
-                        f"{task_desc},{score:.3f},raw={raw_score},frames={len(frames)},"
-                        f"{response[:120]}\n"
+                        f"{task_desc},{score:.3f},raw={raw_score},frames={len(frames)}\n"
                     )
                     with open(self.vlm_log_file, "a") as f:
                         f.write(log_line)
@@ -504,13 +626,18 @@ class VLMManiskillEnv(ManiskillEnv):
         """
         vlm_rewards = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
-        if not self._vlm_connected or self._vlm_client is None:
+        if not self._vlm_connected or (
+            not self.vlm_use_tri_reward and self._vlm_client is None
+        ):
             return vlm_rewards
 
         rgb_list = self._extract_rgb_for_vlm(extracted_obs)
 
         # Get task descriptions
         task_descs = self._get_task_descriptions()
+
+        if self.vlm_use_tri_reward:
+            return self._compute_vlm_tri_rewards(rgb_list, task_descs, vlm_rewards)
 
         if self.vlm_use_comparison:
             return self._compute_vlm_comparison_rewards(rgb_list, task_descs, vlm_rewards)
@@ -522,6 +649,10 @@ class VLMManiskillEnv(ManiskillEnv):
         if self.vlm_use_robometer:
             self._update_robometer_buffers(rgb_list)
             return self._compute_vlm_robometer_rewards(rgb_list, task_descs, vlm_rewards)
+
+        if self.vlm_use_topreward:
+            self._update_topreward_buffers(rgb_list)
+            return self._compute_vlm_topreward_rewards(rgb_list, task_descs, vlm_rewards)
 
         # Single-frame modes: completion / progress / quality
         for i in range(self.num_envs):
@@ -550,10 +681,8 @@ class VLMManiskillEnv(ManiskillEnv):
                             is_success = completed or (
                                 raw_score >= self.vlm_success_threshold
                             )
-                        response = result.get("response", "")
                     else:
                         score = 0.0
-                        response = ""
                         is_success = False
                 else:
                     initial_rgb = None
@@ -567,11 +696,9 @@ class VLMManiskillEnv(ManiskillEnv):
                     )
                     if isinstance(result, dict):
                         score = result.get("score", 0.0)
-                        response = result.get("response", "")
                         is_success = float(score) >= self.vlm_success_threshold
                     else:
                         score = 0.0
-                        response = ""
                         is_success = False
 
                 vlm_rewards[i] = float(score) * self.vlm_reward_scale
@@ -582,7 +709,10 @@ class VLMManiskillEnv(ManiskillEnv):
                 if self._vlm_log_enabled:
                     try:
                         timestamp = datetime.now().strftime("%H:%M:%S")
-                        log_line = f"{timestamp},env_{i},step_{self._vlm_step_counter},{self.vlm_reward_type},{task_desc},{float(score):.3f},{response[:100]}\n"
+                        # The VLM's raw reply is deliberately not logged: it opens with a
+                        # newline ('{\n  "reasoning": ...'), which would split every record
+                        # across lines and make this file unparseable.
+                        log_line = f"{timestamp},env_{i},step_{self._vlm_step_counter},{self.vlm_reward_type},{task_desc},{float(score):.3f}\n"
                         with open(self.vlm_log_file, "a") as f:
                             f.write(log_line)
                     except Exception as log_err:
@@ -591,6 +721,76 @@ class VLMManiskillEnv(ManiskillEnv):
             except Exception as e:
                 print(f"[VLM] Warning: reward failed for env {i}: {e}")
 
+        return vlm_rewards
+
+    def _compute_vlm_tri_rewards(
+        self,
+        rgb_list: list,
+        task_descs: list,
+        vlm_rewards: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the fixed-weight combination of contrastive/progress/completion."""
+        components = {
+            name: torch.zeros_like(vlm_rewards)
+            for name in ("contrastive", "progress", "completion")
+        }
+        env_indices = self._select_env_indices(min(len(rgb_list), self.num_envs))
+        for env_idx in env_indices:
+            rgb = rgb_list[env_idx]
+            if rgb is None:
+                continue
+            task = self._format_vlm_prompt(task_descs[env_idx])
+
+            prev_rgb = self._vlm_prev_images.get(env_idx)
+            if prev_rgb is not None:
+                result = self._vlm_tri_clients["contrastive"].compute_comparison(
+                    prev_rgb, rgb, task
+                )
+                if result.get("success", False):
+                    score = float(result["score"])
+                    if self.vlm_tri_contrastive_to_unit:
+                        # [-1, 1] -> [0, 1] to match progress/completion scale.
+                        score = (score + 1.0) / 2.0
+                    components["contrastive"][env_idx] = score
+            self._vlm_prev_images[env_idx] = np.array(rgb, copy=True)
+
+            progress_result = self._vlm_tri_clients["progress"].compute_reward(
+                rgb,
+                task,
+                reward_type="progress",
+                initial_image=self._vlm_initial_images[env_idx],
+            )
+            if progress_result.get("success", False):
+                components["progress"][env_idx] = float(progress_result["score"])
+
+            completion_result = self._vlm_tri_clients["completion"].compute_completion(
+                rgb, task
+            )
+            if completion_result.get("success", False):
+                components["completion"][env_idx] = float(
+                    completion_result["score"]
+                )
+
+        for name, tensor in components.items():
+            self._vlm_last_components[name] = tensor.clone()
+        for weight, name in zip(
+            self.vlm_tri_weights, ("contrastive", "progress", "completion")
+        ):
+            vlm_rewards += weight * components[name]
+        vlm_rewards *= self.vlm_reward_scale
+        if self._vlm_log_enabled:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            weights = "/".join(f"{weight:.6f}" for weight in self.vlm_tri_weights)
+            with open(self.vlm_log_file, "a") as handle:
+                for env_idx in env_indices:
+                    task = task_descs[env_idx] if env_idx < len(task_descs) else task_descs[0]
+                    handle.write(
+                        f"{timestamp},env_{env_idx},step_{self._vlm_step_counter},tri,"
+                        f"{task},contrastive={components['contrastive'][env_idx].item():.4f},"
+                        f"progress={components['progress'][env_idx].item():.4f},"
+                        f"completion={components['completion'][env_idx].item():.4f},"
+                        f"weights={weights},reward={vlm_rewards[env_idx].item():.4f}\n"
+                    )
         return vlm_rewards
 
     def _maybe_save_image(self, rgb, task_desc, env_idx, is_success):
@@ -772,6 +972,7 @@ class VLMManiskillEnv(ManiskillEnv):
             self._vlm_prev_images = {}
             self._vlm_frame_buffers = {}
             self._vlm_roboreward_frame_buffers = {}
+            self._vlm_topreward_frame_buffers = {}
             self._vlm_active_steps = set()
             if self.vlm_calls_per_episode > 0 and self.vlm_call_interval > 0:
                 all_triggers = list(
@@ -800,6 +1001,7 @@ class VLMManiskillEnv(ManiskillEnv):
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
+                self._vlm_topreward_frame_buffers.pop(idx, None)
         return extracted_obs, infos
 
     def _calc_step_reward(self, reward, info):
@@ -893,6 +1095,9 @@ class VLMManiskillEnv(ManiskillEnv):
 
         # Add VLM info
         infos["vlm_rewards"] = vlm_rewards.clone()
+        if self.vlm_use_tri_reward:
+            for name, component in self._vlm_last_components.items():
+                infos[f"vlm_{name}_rewards"] = component.clone()
         self._log_openloop_step(
             infos=infos,
             step_reward=step_reward,
@@ -911,24 +1116,33 @@ class VLMManiskillEnv(ManiskillEnv):
         self._vlm_step_counter = 0
         if env_idx is None:
             self._vlm_last_rewards[:] = 0.0
+            for component in self._vlm_last_components.values():
+                component[:] = 0.0
             self._vlm_prev_images = {}
             self._vlm_frame_buffers = {}
             self._vlm_roboreward_frame_buffers = {}
+            self._vlm_topreward_frame_buffers = {}
             self._vlm_active_steps = set()
             return
         if isinstance(env_idx, torch.Tensor):
             env_idx = env_idx.to(self.device)
             self._vlm_last_rewards[env_idx] = 0.0
+            for component in self._vlm_last_components.values():
+                component[env_idx] = 0.0
             for idx in env_idx.detach().cpu().tolist():
                 idx = int(idx)
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
+                self._vlm_topreward_frame_buffers.pop(idx, None)
         else:
             env_idx = np.asarray(env_idx).tolist()
             self._vlm_last_rewards[env_idx] = 0.0
+            for component in self._vlm_last_components.values():
+                component[env_idx] = 0.0
             for idx in env_idx:
                 idx = int(idx)
                 self._vlm_prev_images.pop(idx, None)
                 self._vlm_frame_buffers.pop(idx, None)
                 self._vlm_roboreward_frame_buffers.pop(idx, None)
+                self._vlm_topreward_frame_buffers.pop(idx, None)

@@ -1,5 +1,23 @@
-torch>=2.1.0
-transformers>=4.45.0
+# VLM reward server dependencies.
+#
+# IMPORTANT: install torch FIRST, from the index matching your GPU driver, then
+# install this file. Do not let pip resolve torch on its own.
+#
+# The CUDA build is selected by the index URL, not by the version pin. An
+# unbounded `torch>=2.1.0` lets pip pull a wheel built for a newer CUDA than the
+# driver supports; torch then imports fine but reports cuda.is_available() ==
+# False and every GPU silently disappears. Check the driver's max CUDA with
+# `nvidia-smi` (top-right "CUDA Version") and match it:
+#
+#   CUDA 12.4 driver:
+#     pip install torch==2.4.1 torchvision==0.19.1 \
+#       --index-url https://download.pytorch.org/whl/cu124
+#
+# Verify before going further -- this must print True:
+#   python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+
+torch>=2.4.1,<2.6          # upper bound is deliberate; see the note above
+transformers>=4.57,<5      # Qwen3-VL landed in 4.57; 5.x is a breaking major
 flask
 numpy
 Pillow

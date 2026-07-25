@@ -18,10 +18,14 @@ Recorded data layout (compatible with eval/score_with_vlm.py):
 
   <record_output_dir>/worker_<rank>/trajectories/traj_<env>_<episode>/
       metadata.jsonl   - one JSON line per step: {t, oracle_reward, cumulative_reward, success}
-      summary.json     - {success_once, total_oracle_reward}
+      summary.json     - {success_once, total_oracle_reward, task_description}
       frame_000.png    - RGB frame at t=0 (state after action)
       frame_001.png
       ...
+
+task_description is per-episode: this environment (PutOnPlateInScene25Main)
+samples a different object per episode, so a single fixed description passed to
+eval/score_with_vlm.py would ask the VLM about the wrong object on most frames.
 """
 
 import json
@@ -71,10 +75,25 @@ class RecordingManiskillEnv(ManiskillEnv):
         self._cumulative_rewards = [0.0] * self._record_num_envs
         self._ep_success_once = [False] * self._record_num_envs
         self._traj_counters = [0] * self._record_num_envs  # episode index per env
+        self._task_descriptions = [""] * self._record_num_envs
 
     def _record_metrics(self, step_reward, infos):
         infos["episode"] = {}
         return infos
+
+    def _get_task_descriptions(self) -> list:
+        """Per-env language instruction, matching VLMManiskillEnv._get_task_descriptions.
+
+        PutOnPlateInScene25Main samples a different object per episode, so this
+        must be read every step rather than assumed constant.
+        """
+        try:
+            descs = self.env.unwrapped.get_language_instruction()
+            if isinstance(descs, str):
+                return [descs] * self.num_envs
+            return list(descs)
+        except (AttributeError, NotImplementedError):
+            return [""] * self.num_envs
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -120,6 +139,7 @@ class RecordingManiskillEnv(ManiskillEnv):
         summary = {
             "success_once": self._ep_success_once[env_idx],
             "total_oracle_reward": total_oracle_reward,
+            "task_description": self._task_descriptions[env_idx],
         }
         with open(os.path.join(traj_dir, "summary.json"), "w") as f:
             json.dump(summary, f, indent=2)
@@ -151,11 +171,14 @@ class RecordingManiskillEnv(ManiskillEnv):
                 torch.zeros(self.num_envs, dtype=torch.bool, device=self.device),
             )
             success_np = success_tensor.cpu().numpy()
+            task_descs = self._get_task_descriptions()
 
             for i in range(self._record_num_envs):
                 t = self._step_counters[i]
                 self._cumulative_rewards[i] += float(rew_np[i])
                 self._ep_success_once[i] = self._ep_success_once[i] or bool(success_np[i])
+                if i < len(task_descs):
+                    self._task_descriptions[i] = task_descs[i]
 
                 self._step_data[i].append(
                     {

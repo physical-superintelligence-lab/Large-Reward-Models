@@ -60,21 +60,34 @@ def extract_trajectory_data(traj: dict) -> dict:
             if v is not None:
                 vlm_completion.append(v)
 
+    # (t, score) pairs, excluding the placeholder first-frame entry (no real
+    # comparison was made for it -- see score_trajectory_comparison).
     vlm_comparison = []
+    vlm_comparison_t = []
     if comparison_scores:
         for s in comparison_scores:
+            if s.get("result") == "first_frame":
+                continue
             v = s.get("vlm_comparison_score")
             if v is not None:
                 vlm_comparison.append(v)
+                vlm_comparison_t.append(s.get("t"))
+
+    # t -> cumulative_reward, for pulling the oracle value at the comparison's
+    # own timestep (comparison_scores can be sparser than oracle_steps when
+    # call_interval > 1, so position-based indexing does not line up).
+    cumulative_by_t = {s.get("t"): c for s, c in zip(oracle_steps, cumulative_oracle)}
 
     return {
         "oracle_rewards": oracle_rewards,
         "cumulative_oracle": cumulative_oracle,
+        "cumulative_by_t": cumulative_by_t,
         "success_flags": success_flags,
         "episode_success": episode_success,
         "total_oracle_reward": summary.get("total_oracle_reward", cumulative_oracle[-1] if cumulative_oracle else 0),
         "vlm_completion": vlm_completion,
         "vlm_comparison": vlm_comparison,
+        "vlm_comparison_t": vlm_comparison_t,
         "num_steps": len(oracle_steps),
     }
 
@@ -166,40 +179,41 @@ def compute_contrastive_metrics(trajs_data: list) -> dict:
         print("WARNING: No VLM comparison scores found.")
         return metrics
 
-    # Direction Acc (%): fraction of comparison calls where VLM direction
-    # matches oracle direction (both positive or both negative/zero)
+    # Each VLM comparison at timestep t judges the change from the PREVIOUS
+    # recorded t (score_trajectory_comparison always compares against the prior
+    # entry in the list, whatever the call interval was) -- so the matching
+    # oracle signal is the change in cumulative reward over that same window,
+    # looked up by t, not a same-position slice of the raw per-step reward.
+    # Per-step oracle_reward is sparse (ManiSkill's shaping fires on isolated
+    # events), so at call_interval > 1 a positional slice compares the VLM's
+    # judgment against oracle values from entirely different, earlier
+    # timesteps -- and even at call_interval == 1 it discards the sparsity
+    # problem by coincidence rather than by design. cumulative-delta-by-t
+    # sidesteps both issues since it is aligned by the same t recorded on
+    # the comparison call.
     correct_dir = 0
     total_dir = 0
-    for t in trajs_data:
-        vlm = np.array(t["vlm_comparison"])
-        oracle = np.array(t["oracle_rewards"][:len(vlm)])
-        if len(vlm) != len(oracle):
-            min_len = min(len(vlm), len(oracle))
-            vlm = vlm[:min_len]
-            oracle = oracle[:min_len]
-        for v, o in zip(vlm, oracle):
-            total_dir += 1
-            if (v > 0 and o > 0) or (v < 0 and o < 0) or (v == 0 and o == 0):
-                correct_dir += 1
-    if total_dir > 0:
-        metrics["direction_acc_pct"] = float(correct_dir / total_dir * 100)
-
-    # Progress Recall (%): when oracle reward is positive (progress happened),
-    # how often does VLM predict positive (+1)
     true_positive = 0
     total_positive = 0
     for t in trajs_data:
-        vlm = np.array(t["vlm_comparison"])
-        oracle = np.array(t["oracle_rewards"][:len(vlm)])
-        if len(vlm) != len(oracle):
-            min_len = min(len(vlm), len(oracle))
-            vlm = vlm[:min_len]
-            oracle = oracle[:min_len]
-        for v, o in zip(vlm, oracle):
+        vlm = t["vlm_comparison"]
+        ts = t["vlm_comparison_t"]
+        cum_by_t = t["cumulative_by_t"]
+        for i in range(1, len(vlm)):
+            prev_t, curr_t = ts[i - 1], ts[i]
+            if prev_t not in cum_by_t or curr_t not in cum_by_t:
+                continue
+            v = vlm[i]
+            o = cum_by_t[curr_t] - cum_by_t[prev_t]
+            total_dir += 1
+            if (v > 0 and o > 0) or (v < 0 and o < 0) or (v == 0 and o == 0):
+                correct_dir += 1
             if o > 0:
                 total_positive += 1
                 if v > 0:
                     true_positive += 1
+    if total_dir > 0:
+        metrics["direction_acc_pct"] = float(correct_dir / total_dir * 100)
     if total_positive > 0:
         metrics["progress_recall_pct"] = float(true_positive / total_positive * 100)
 

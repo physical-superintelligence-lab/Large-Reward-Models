@@ -213,6 +213,71 @@ class VLMRewardClient:
             print(f"VLM roboreward request failed: {e}")
             return {"score": 0.0, "raw_score": None, "response": "", "success": False}
 
+    def compute_topreward(
+        self,
+        frames: list[np.ndarray],
+        task_description: str,
+        fps: float = 2.0,
+    ) -> dict:
+        """
+        Score a trajectory via TOPReward: log P("True" | video, instruction).
+
+        Args:
+            frames: RGB frame list, each shape=(H,W,3), dtype=uint8
+            task_description: Task description
+            fps: wall-clock frame rate of `frames` (control_freq / vlm_call_interval
+                for the online training path).
+
+        Returns:
+            dict: {"score": float (exp of the log-prob, in [0,1]),
+                   "log_prob": float, "token_count": int,
+                   "response": str, "success": bool}
+        """
+        encoded_frames = []
+        for frame in frames:
+            if frame is None:
+                continue
+            if frame.dtype != np.uint8:
+                frame = (frame * 255).astype(np.uint8)
+            encoded_frames.append(self._encode_image(frame))
+
+        if not encoded_frames:
+            return {"score": 0.0, "log_prob": None, "token_count": 0,
+                    "response": "", "success": False}
+
+        request_data = {
+            "frames": encoded_frames,
+            "task_description": task_description,
+            "fps": fps,
+        }
+
+        try:
+            response = requests.post(
+                f"{self.server_url}/compute_topreward",
+                json=request_data,
+                timeout=self.timeout,
+            )
+            result = response.json()
+            if not result.get("success", False):
+                print(f"VLM topreward failed: {result.get('error', 'Unknown error')}")
+                return {"score": 0.0, "log_prob": None, "token_count": 0,
+                        "response": "", "success": False}
+            return {
+                "score": result["score"],
+                "log_prob": result.get("log_prob"),
+                "token_count": result.get("token_count", 0),
+                "response": result.get("response", ""),
+                "success": True,
+            }
+        except requests.exceptions.Timeout:
+            print("VLM topreward request timed out")
+            return {"score": 0.0, "log_prob": None, "token_count": 0,
+                    "response": "", "success": False}
+        except Exception as e:
+            print(f"VLM topreward request failed: {e}")
+            return {"score": 0.0, "log_prob": None, "token_count": 0,
+                    "response": "", "success": False}
+
     def compute_reward(
         self,
         image: np.ndarray,
