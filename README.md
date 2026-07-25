@@ -193,7 +193,7 @@ Run the trained policy in ManiSkill and measure success rate.
 the evaluation episodes identical across runs, but action sampling during
 rollout (`do_sample=True`) is not pinned to a fixed outcome, so the success
 rate of the SAME checkpoint can vary by several points between runs. Evaluate
-each checkpoint across multiple seeds and report the mean and 95% CI rather
+each checkpoint across multiple seeds and report the mean ± std rather
 than trusting a single run.
 
 ```bash
@@ -209,7 +209,7 @@ bash eval/run_closed_loop_seeds.sh \
   --ckpt-path /path/to/checkpoint/actor/model_state_dict/full_weights.pt \
   --seeds "0 1 2 3 4"
 
-# Mean, 95% CI, and (if you evaluate more than one method into the same
+# Mean ± std, and (if you evaluate more than one method into the same
 # --results-dir) paired seed-level comparisons against a reference method
 python eval/summarize_closed_loop.py \
   --results-dir ./results/closed_loop \
@@ -319,7 +319,7 @@ Large-Reward-Models/
 │   ├── score_with_vlm.py         # Score trajectories with VLM (contrastive/completion/progress)
 │   ├── compute_openloop_metrics.py  # Compute open-loop metrics
 │   ├── run_closed_loop_seeds.sh  # Repeat closed-loop eval across seeds
-│   └── summarize_closed_loop.py  # Mean/95% CI (and paired comparisons) across seeds
+│   └── summarize_closed_loop.py  # Mean/std (and paired comparisons) across seeds
 └── vlm_reward/
     ├── requirements.txt          # Python dependencies for VLM server
     ├── start_server.sh           # VLM reward server launcher
