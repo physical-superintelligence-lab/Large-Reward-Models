@@ -302,7 +302,7 @@ Large-Reward-Models/
 │   ├── tri.yaml                  # Training config: tri mode (all three LRM heads)
 │   ├── roboreward.yaml           # Training config: roboreward mode
 │   ├── robometer.yaml            # Training config: robometer mode
-│   ├── topreward.yaml            # Training config: topreward mode (zero-shot)
+│   ├── topreward.yaml            # Training config: topreward mode 
 │   ├── env/
 │   │   ├── maniskill_put_on_plate_vlm.yaml        # VLM environment config
 │   │   └── maniskill_put_on_plate_recording.yaml   # Recording env config (open-loop eval)
