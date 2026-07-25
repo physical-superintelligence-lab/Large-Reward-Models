@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Extract final closed-loop results and report seed-level confidence intervals."""
+"""Extract final closed-loop results and report seed-level mean +/- std.
+
+Paired comparisons against a reference method still use a 95% CI and a
+paired t-test, since that section is testing significance rather than
+just describing one method's spread.
+"""
 
 import argparse
 import csv
@@ -43,6 +48,13 @@ def extract_tensorboard(run_dir: Path, success_tag: str, trials_tag: str):
         "trials": n,
         "rate": rate,
     }
+
+
+def mean_std(values):
+    values = np.asarray(values, dtype=float)
+    mean = float(values.mean())
+    std = float(values.std(ddof=1)) if len(values) > 1 else math.nan
+    return mean, std
 
 
 def t_interval(values, confidence=0.95):
@@ -102,16 +114,16 @@ def main():
     grouped = defaultdict(dict)
     for row in rows:
         grouped[row["method"]][row["seed"]] = row["rate"]
-    print("| Method | Seeds | Mean success | 95% CI across training seeds |")
-    print("|---|---:|---:|---:|")
+    print("| Method | Seeds | Mean ± Std across training seeds |")
+    print("|---|---:|---:|")
     for method in methods:
         seed_rates = grouped.get(method, {})
         if not seed_rates:
             continue
-        mean, low, high = t_interval(list(seed_rates.values()))
+        mean, std = mean_std(list(seed_rates.values()))
+        std_text = "NA" if math.isnan(std) else f"{100*std:.2f}%"
         print(
-            f"| {method} | {len(seed_rates)} | {100*mean:.2f}% | "
-            f"[{100*low:.2f}%, {100*high:.2f}%] |"
+            f"| {method} | {len(seed_rates)} | {100*mean:.2f}% ± {std_text} |"
         )
 
     reference = grouped.get(args.reference, {})
